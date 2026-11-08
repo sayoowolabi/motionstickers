@@ -17,7 +17,7 @@ import cv2
 import streamlit as st
 
 from pathlib import Path
-from stickers import extract_stickers
+from stickers import extract_stickers, make_gif
 
 st.set_page_config(page_title="Motion Stickers!", page_icon="✂️", layout="wide")
 
@@ -85,5 +85,12 @@ if uploaded and st.button("Make stickers"):
             zf.writestr(f"sticker_{i:03d}_{t:.1f}s.png", png.tobytes())
 
     st.markdown('<div class="sheet">' + "".join(figures) + "</div>", unsafe_allow_html=True)
-    st.download_button("Download all stickers", zip_buffer.getvalue(),
-                       file_name="stickers.zip", mime="application/zip")
+    col_zip, col_gif = st.columns(2)
+    with col_zip:
+        st.download_button("Download all stickers (.zip)", zip_buffer.getvalue(),
+                           file_name="stickers.zip", mime="application/zip")
+    with col_gif:
+        gif = make_gif(stickers)
+        if gif:
+            st.download_button("Download stop-motion (.gif)", gif,
+                               file_name="stickers.gif", mime="image/gif")

@@ -44,7 +44,7 @@ h1 { font-size: 3.2rem !important; line-height: 1.05 !important; }
 .stButton button:active, .stDownloadButton button:active { transform: translateY(3px); box-shadow: 0 1px 0 #B8901F; }
 
 /* Sticker sheet: each image gets a white die-cut outline that follows its
-   transparent edges (stacked drop-shadows), a slight tilt, and a timestamp tag */
+   transparent edges (drawn in stickers.py), a slight tilt, and a timestamp tag */
 .sheet {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 34px 26px; padding: 18px 6px 30px;
@@ -53,9 +53,9 @@ h1 { font-size: 3.2rem !important; line-height: 1.05 !important; }
 .sticker:hover { transform: rotate(0deg) scale(1.05); }
 .sticker img {
   max-width: 100%; border-radius: 6px;
-  filter: drop-shadow(3px 0 0 #fff) drop-shadow(-3px 0 0 #fff)
-          drop-shadow(0 3px 0 #fff) drop-shadow(0 -3px 0 #fff)
-          drop-shadow(0 8px 10px rgba(0,0,0,.4));
+  /* The white sticker border is now drawn by cut_out_sticker() in
+     stickers.py, so the CSS only adds a soft shadow underneath. */
+  filter: drop-shadow(0 8px 10px rgba(0,0,0,.4));
 }
 .sticker figcaption {
   display: inline-block; margin-top: 12px; padding: 2px 11px; border-radius: 999px;

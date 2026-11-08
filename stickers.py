@@ -5,11 +5,12 @@ The interface (app.py) only calls extract_stickers(). Everything that turns a
 video into sticker cutouts lives here, so this file can be developed, tested
 and submitted independently of the interface.
 
-CURRENT STATE: placeholder. It just samples frames and returns them whole
-(fully opaque), so the interface can be built and tested end to end today.
-Replace the body of make_sticker() with the team's own pipeline as each
-part of the research is finished.
+CURRENT STATE: steps 1-2 (Sayo) and 5-6 (Chloe) are in. Step 3 uses a
+TEMPORARY stand-in, temp_clean_mask(), until Pati's version is merged.
+Step 4 (enhancement) is not in yet.
 """
+
+import io
 
 import cv2
 import numpy as np
@@ -42,10 +43,14 @@ def make_sticker(frame, prev_gray):
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
         return None
-    
-    # Placeholder: whole frame, fully opaque (alpha = 255 everywhere).
-    sticker = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-    return sticker
+
+    # Step 3 (TEMPORARY stand-in until Pati's clean_mask() is merged)
+    clean_mask = temp_clean_mask(motion_mask)
+    if clean_mask is None:
+        return None
+
+    # Step 5 (Chloe): cut the object out as a transparent sticker
+    return cut_out_sticker(frame, clean_mask)
 
 def preprocess_frame(frame):
     """
@@ -66,7 +71,7 @@ def preprocess_frame(frame):
     #Converts each video frame from colour to greyscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    #Applies a small Gaussian blur to remove tiny pixel-level changes 
+    #Applies a small Gaussian blur to remove tiny pixel-level changes
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
     #Calculates the average brightness of the frame.
@@ -93,6 +98,137 @@ def create_motion_mask(current_gray, prev_gray):
     _, motion_mask = cv2.threshold(frame_difference, 25, 255, cv2.THRESH_BINARY)
 
     return motion_mask
+
+def temp_clean_mask(mask):
+    """
+    TEMPORARY - replace with Pati's clean_mask() (step 3) once it is merged.
+
+    Frame differencing gives a hollow, broken outline of the moving object.
+    This joins the outline up and keeps only the biggest moving region, so
+    step 5 has a solid shape to cut out.
+
+    Returns a filled black/white mask the same size as the input, or None
+    if there is no usable object.
+    """
+    # Closing = dilate then erode. A big kernel bridges the gaps in the
+    # outline so it becomes one connected shape.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    # Find the outer outline of every white region
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    # Keep only the largest region - small ones are usually noise
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < 500:
+        return None
+
+    # Draw that region filled in (thickness=-1) onto a blank mask
+    filled = np.zeros_like(mask)
+    cv2.drawContours(filled, [largest], -1, 255, thickness=-1)
+    return filled
+
+
+def cut_out_sticker(frame, mask, outline=6, padding=10):
+    """
+    Step 5 (Chloe): turn a frame + a clean mask into a sticker.
+
+    1. Transparency: the mask becomes the alpha channel, so the object is
+       opaque (255) and the background is see-through (0).
+    2. Crop: cut the image down to the object's bounding box, plus some
+       padding so the outline is not clipped at the edges.
+    3. Outline: dilate the mask to make it slightly bigger, then colour
+       the extra ring white to create the die-cut sticker border.
+
+    Parameters:
+        frame:   original colour frame (BGR)
+        mask:    single-channel mask, 255 = object, 0 = background
+        outline: thickness of the white border in pixels
+        padding: empty space kept around the object when cropping
+
+    Returns:
+        A BGRA image (4 channels) ready to save as a transparent PNG.
+    """
+    # --- 1. Transparency --------------------------------------------------
+    # Split the frame into its blue, green and red channels, then merge
+    # them back with the mask added as a fourth (alpha) channel.
+    b, g, r = cv2.split(frame)
+    sticker = cv2.merge([b, g, r, mask])
+
+    # --- 2. Crop ----------------------------------------------------------
+    # boundingRect gives the smallest upright box around the white pixels
+    x, y, w, h = cv2.boundingRect(mask)
+    pad = outline + padding
+    frame_h, frame_w = mask.shape
+    # Clamp to the frame edges so we never slice outside the image
+    x1, y1 = max(x - pad, 0), max(y - pad, 0)
+    x2, y2 = min(x + w + pad, frame_w), min(y + h + pad, frame_h)
+    sticker = sticker[y1:y2, x1:x2].copy()
+    cropped_mask = mask[y1:y2, x1:x2]
+
+    # --- 3. White outline -------------------------------------------------
+    # Dilation grows the white region outwards by roughly `outline` pixels
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                       (2 * outline + 1, 2 * outline + 1))
+    grown = cv2.dilate(cropped_mask, kernel)
+
+    # The border ring = pixels in the grown mask but not in the original
+    ring = (grown > 0) & (cropped_mask == 0)
+    sticker[ring] = (255, 255, 255, 255)   # white and fully opaque
+
+    return sticker
+
+
+def make_gif(stickers, frame_ms=400):
+    """
+    Step 6 (Chloe): combine the stickers into one looping animated GIF,
+    a "stop-motion" version of what moved.
+
+    Every GIF frame must be the same size, but each sticker has a
+    different size, so each one is centred on a transparent canvas as big
+    as the largest sticker.
+
+    Parameters:
+        stickers: list of (time_in_seconds, BGRA sticker) from extract_stickers
+        frame_ms: how long each sticker is shown, in milliseconds
+
+    Returns:
+        The GIF file as bytes (ready for a download button), or None.
+    """
+    from PIL import Image          # Pillow, the Python imaging library
+
+    if not stickers:
+        return None
+
+    # Canvas size = the largest width and height of any sticker
+    canvas_w = max(s.shape[1] for _, s in stickers)
+    canvas_h = max(s.shape[0] for _, s in stickers)
+
+    frames = []
+    for _, sticker in stickers:
+        # OpenCV stores colours as BGRA; Pillow expects RGBA
+        rgba = cv2.cvtColor(sticker, cv2.COLOR_BGRA2RGBA)
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        img = Image.fromarray(rgba)
+        offset = ((canvas_w - img.width) // 2, (canvas_h - img.height) // 2)
+        canvas.paste(img, offset, img)       # third arg keeps transparency
+        frames.append(canvas)
+
+    buffer = io.BytesIO()
+    frames[0].save(
+        buffer, format="GIF",
+        save_all=True,             # save every frame, not just the first
+        append_images=frames[1:],  # the rest of the frames, in order
+        duration=frame_ms,         # milliseconds per frame
+        loop=0,                    # 0 = loop forever
+        disposal=2,                # clear each frame before the next one,
+                                   # otherwise transparent frames pile up
+    )
+    return buffer.getvalue()
+
 
 def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     """
