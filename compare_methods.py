@@ -26,7 +26,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from stickers import preprocess_frame, create_motion_mask, temp_clean_mask
+from stickers import preprocess_frame, create_motion_mask, clean_mask
 
 OUT = Path("output/compare")
 
@@ -230,7 +230,7 @@ def main():
         [frame, diff, avg], ["Original frame", "Frame difference", f"Running average ({args.alpha})"]))
 
     # 2. Mask cleanup (from the current frame-difference mask)
-    largest, t3 = timed(temp_clean_mask, diff)
+    largest, t3 = timed(clean_mask, diff)
     hull, t4 = timed(clean_convex_hull, diff)
     if largest is None:
         raise SystemExit("No moving object found at this frame - try another --frame.")

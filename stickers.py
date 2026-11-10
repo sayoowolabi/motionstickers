@@ -5,9 +5,7 @@ The interface (app.py) only calls extract_stickers(). Everything that turns a
 video into sticker cutouts lives here, so this file can be developed, tested
 and submitted independently of the interface.
 
-CURRENT STATE: steps 1-2 (Sayo) and 5-6 (Chloe) are in. Step 3 uses a
-TEMPORARY stand-in, temp_clean_mask(), until Pati's version is merged.
-Step 4 (enhancement) is not in yet.
+CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 """
 
 import io
@@ -44,13 +42,16 @@ def make_sticker(frame, prev_gray):
         # If the motion is too small, return None
         return None
 
-    # Step 3 (TEMPORARY stand-in until Pati's clean_mask() is merged)
-    clean_mask = temp_clean_mask(motion_mask)
-    if clean_mask is None:
+     # Step 3 (Pati): clean the mask into one solid shape
+    cleaned = clean_mask(motion_mask)
+    if cleaned is None:
         return None
 
+    # Step 4 (Pati): make the object clearer before cutting it out
+    enhanced = enhance_object(frame)
+
     # Step 5 (Chloe): cut the object out as a transparent sticker
-    return cut_out_sticker(frame, clean_mask)
+    return cut_out_sticker(enhanced, cleaned)
 
 def preprocess_frame(frame):
     """
@@ -99,38 +100,82 @@ def create_motion_mask(current_gray, prev_gray):
 
     return motion_mask
 
-def temp_clean_mask(mask):
+
+
+def clean_mask(mask, min_area=500):
     """
-    TEMPORARY - replace with Pati's clean_mask() (step 3) once it is merged.
+    Step 3 (Pati): clean the motion mask into one solid shape.
 
-    Frame differencing gives a hollow, broken outline of the moving object.
-    This joins the outline up and keeps only the biggest moving region, so
-    step 5 has a solid shape to cut out.
+    The raw motion mask has two problems: tiny white specks from camera
+    noise, and a hollow, broken outline around the moving object (frame
+    differencing only picks up the edges that moved). This removes the
+    specks, joins the outline up and fills it in.
 
-    Returns a filled black/white mask the same size as the input, or None
-    if there is no usable object.
+    Parameters:
+        mask:     black/white motion mask from create_motion_mask()
+        min_area: smallest shape (in pixels) that counts as a real object
+
+    Returns:
+        A filled black/white mask the same size as the input, or None
+        if there is no usable object.
     """
-    # Closing = dilate then erode. A big kernel bridges the gaps in the
-    # outline so it becomes one connected shape.
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
-    closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    #Opening = erode then dilate. A small kernel deletes specks of noise
+    #but leaves the bigger object shape alone
+    small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, small)
 
-    # Find the outer outline of every white region
+    #Closing = dilate then erode. A big kernel bridges the gaps in the
+    #broken outline so it becomes one connected shape
+    big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, big)
+
+    #Finds the outer outline of every white region
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
 
-    # Keep only the largest region - small ones are usually noise
+    #Keeps only the largest region, the moving object
     largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < 500:
+    if cv2.contourArea(largest) < min_area:
         return None
 
-    # Draw that region filled in (thickness=-1) onto a blank mask
+    #Draws that region filled in (thickness=-1) onto a blank mask
     filled = np.zeros_like(mask)
     cv2.drawContours(filled, [largest], -1, 255, thickness=-1)
     return filled
 
+def enhance_object(frame):
+    """
+    Step 4 (Pati): make the object clearer before it is cut out.
+
+    CCTV footage is often dark, low-contrast and a bit soft. This boosts
+    the contrast with CLAHE and then sharpens the edges with an unsharp
+    mask, so the sticker looks crisp instead of murky.
+
+    Parameters:
+        frame: the original colour frame (BGR)
+
+    Returns:
+        The enhanced colour frame, same size as the input.
+    """
+    #Converts to LAB so brightness (L) is separate from colour (A and B).
+    #CLAHE only touches L, so the colours don't get changed
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    #CLAHE boosts contrast in small tiles, so dark areas get brighter
+    #without blowing out areas that are already bright
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    contrasted = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+    #Unsharp mask: blur a copy, then take the blur away from the original.
+    #What's left is the edges, which get boosted (1.5 original - 0.5 blur)
+    blurred = cv2.GaussianBlur(contrasted, (0, 0), 2)
+    sharpened = cv2.addWeighted(contrasted, 1.5, blurred, -0.5, 0)
+
+    return sharpened
 
 def cut_out_sticker(frame, mask, outline=6, padding=10):
     """
