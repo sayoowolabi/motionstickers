@@ -16,7 +16,8 @@ The project uses classical image-processing techniques only (no machine learning
 
 ## How it's supposed to work
 1. **Preprocessing:** greyscale, blur, contrast enhancement for night footage
-2. **Motion detection:** compare frames to find what changed
+2. **Motion detection:** compare each frame with a running-average
+   background (`cv2.accumulateWeighted`, updated every frame) to find what changed
 3. **Mask cleanup:** thresholding and morphology
 4. **Cutout:** keep the moving object, make the background transparent,
    add a white sticker outline
@@ -46,13 +47,17 @@ project root.
 - `app.py`: Streamlit interface (upload, display, download)
 - `stickers.py`: the image-processing pipeline
 - `requirements.txt`: libraries to install
+- `evaluate.py`: scores motion-detection methods against ground truth (IoU, extra area, timing)
+- `mark_frames.py`: hand-mark ground-truth masks for a clip
+- `compare_methods.py`: side-by-side images of alternative methods; `--make-test`
+  makes a synthetic clip with exact ground truth
 
 ## Status
 - [x] Project setup and interface starter
-- [ ] Motion detection
-- [ ] Mask cleanup and cutouts
+- [x] Motion detection (running-average background)
+- [x] Mask cleanup and cutouts
 - [ ] Night-time footage handling
-- [ ] Evaluation
+- [ ] Evaluation (scripts done; synthetic clip scored, real footage still to be hand-marked)
 
 ## References
 - Streamlit 

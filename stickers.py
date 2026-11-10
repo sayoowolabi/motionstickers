@@ -6,6 +6,19 @@ video into sticker cutouts lives here, so this file can be developed, tested
 and submitted independently of the interface.
 
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
+Step 2 now uses a running-average background instead of comparing
+with the previous frame, to reduce ghosting.
+
+KNOWN LIMITATIONS (not handled yet, to be looked at next):
+  - If something is already in the very first frame, it is baked into the
+    starting background and leaves a "ghost" until the background catches
+    up (about 1 / BACKGROUND_ALPHA frames). A warm-up period before making
+    stickers could fix this, but it would miss motion at the very start
+    of short clips.
+  - preprocess_frame() only applies CLAHE when a frame's mean brightness is
+    below 70. If a clip hovers around 70, CLAHE switches on and off between
+    frames, and the whole frame can look different from the averaged
+    background. Needs checking on night footage.
 """
 
 import io
@@ -14,16 +27,37 @@ import cv2
 import numpy as np
 
 
-def make_sticker(frame, prev_gray):
+# Learning rate for the running-average background (step 2).
+# The background "remembers" roughly the last 1 / alpha frames:
+#   small alpha -> slow to adapt (stable, but lighting changes and objects
+#                  that stop moving take longer to fade into the background)
+#   large alpha -> fast to adapt (but a slow-moving object starts to blend
+#                  into the background, leaving a hollow or trailing mask)
+# 0.01 was chosen from the alpha sweep in evaluate.py on the synthetic test
+# clip: 0.005 and 0.01 scored the same (mean IoU ~0.83), while 0.02 and
+# above let the moving object blend into the background and leave a trail
+# behind it (mean IoU 0.56-0.64). 0.01 adapts twice as fast as 0.005
+# (~100 frames, about 4 s at 25 fps), so it was preferred.
+# Re-check this on real footage once it has been hand-marked.
+BACKGROUND_ALPHA = 0.01
+
+
+def make_sticker(frame, gray, background):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
 
-    TODO - our pipeline, built up from the research:
+    Parameters:
+        frame:      the original colour frame (BGR)
+        gray:       the same frame after preprocess_frame()
+        background: the running-average background from update_background()
+                    (float32), or None if there isn't one yet
+
+    Our pipeline, built up from the research:
       1. Preprocess: greyscale, blur, night-frame check,
          CLAHE on night frames.
-      2. Motion mask: compare with the previous frame or a
-         running-average background, then threshold.
+      2. Motion mask: compare with a running-average background,
+         then threshold.
       3. Clean the mask: morphological opening/closing,
          keep the largest contour, fill it in.
       4. Enhance the object: contrast (CLAHE) and sharpening (unsharp mask).
@@ -31,12 +65,13 @@ def make_sticker(frame, prev_gray):
          bounding box, add a white outline by dilating the mask.
     """
 
-    gray = preprocess_frame(frame)
-
-    if prev_gray is None:
+    # Step 1 (preprocessing) is now done once per frame in
+    # extract_stickers(), so the frame isn't preprocessed twice.
+    if background is None:
         return None
 
-    motion_mask = create_motion_mask(gray, prev_gray)
+    # Step 2 (Sayo): compare the frame with the background model
+    motion_mask = background_motion_mask(gray, background)
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
@@ -85,20 +120,65 @@ def preprocess_frame(frame):
 
 def create_motion_mask(current_gray, prev_gray):
     """
-    Create a binary mask showing areas that changed between two frames.
+    Create a binary mask showing areas that differ between two greyscale
+    images.
 
-    The current frame is compared with the previous frame using absolute
-    difference. Pixels with a large enough change are turned white (255),
-    while unchanged pixels remain black (0).
+    The current frame is compared with a reference image using absolute
+    difference. The reference can be the previous frame (frame differencing)
+    or the running-average background (see background_motion_mask). Pixels
+    with a large enough change are turned white (255), while unchanged
+    pixels remain black (0).
     """
 
-    #Calculates the absolute difference between the current and previous frames
+    #Calculates the absolute difference between the current frame and the reference
     frame_difference = cv2.absdiff(prev_gray, current_gray)
 
     #Applies a binary threshold to the frame difference to create a mask of moving areas
     _, motion_mask = cv2.threshold(frame_difference, 25, 255, cv2.THRESH_BINARY)
 
     return motion_mask
+
+
+def update_background(gray, background, alpha=BACKGROUND_ALPHA):
+    """
+    Update the running-average background model with a new frame.
+
+    New background = (1 - alpha) * old background + alpha * current frame
+
+    This should be called on EVERY frame (not just the frames we make
+    stickers from) so the background stays an accurate picture of the scene.
+
+    Parameters:
+        gray:       the current frame after preprocess_frame()
+        background: the current background model (float32), or None on
+                    the first frame
+        alpha:      learning rate, how quickly the background adapts
+
+    Returns:
+        The updated background model (float32).
+    """
+    #On the first frame there is no background yet, so the frame itself
+    #becomes the starting background. accumulateWeighted needs a float
+    #image to store the decimal values of the average, hence float32
+    if background is None:
+        return gray.astype(np.float32)
+
+    #Blends the current frame into the background (updates it in place)
+    cv2.accumulateWeighted(gray, background, alpha)
+    return background
+
+
+def background_motion_mask(gray, background):
+    """
+    Create a motion mask by comparing a frame with the background model.
+
+    The background is stored as float32, so it is converted back to a
+    normal 8-bit image first, then the existing create_motion_mask() does
+    the difference and threshold.
+    """
+    #Converts the float background back to 0-255 whole numbers
+    background_8bit = cv2.convertScaleAbs(background)
+    return create_motion_mask(gray, background_8bit)
 
 
 
@@ -279,8 +359,10 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     """
     Read a video and return a chronological list of (time_in_seconds, sticker).
 
-    every_n_frames: only process every Nth frame, so the output isn't
-                    hundreds of near-identical stickers.
+    every_n_frames: only try to make a sticker from every Nth frame, so the
+                    output isn't hundreds of near-identical stickers. This
+                    does NOT affect motion detection: the background is
+                    updated on every frame regardless.
     progress_callback: optional function(fraction) used by the interface
                        to update a progress bar.
     """
@@ -292,7 +374,7 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
     stickers = []
-    prev_gray = None
+    background = None
     index = 0
 
     while True:
@@ -300,13 +382,19 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
         if not ok:
             break                                   # end of video
 
+        #Preprocess every frame once, since the background needs every frame
+        gray = preprocess_frame(frame)
+
+        #Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
-            sticker = make_sticker(frame, prev_gray)
+            sticker = make_sticker(frame, gray, background)
             if sticker is not None:
                 stickers.append((index / fps, sticker))
 
-            #compare preprocessed previous frame VS preprocessed current frame
-            prev_gray = preprocess_frame(frame)
+        #Update the background on EVERY frame. This happens after the
+        #sticker check so the current frame (and the object in it) isn't
+        #blended into the background it is being compared against
+        background = update_background(gray, background)
         index += 1
         if progress_callback:
             progress_callback(min(index / total, 1.0))

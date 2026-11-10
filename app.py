@@ -50,8 +50,12 @@ st.markdown(
 
 with st.sidebar:
     st.header("Settings")
+    # Motion detection now looks at every frame (to keep the background
+    # model up to date), so this slider only controls how often a sticker
+    # is made, not how accurate the detection is
     every_n = st.slider("Check every Nth frame", 1, 60, 15,
-                        help="Lower means more stickers and slower processing.")
+                        help="How often to make a sticker. Lower means more stickers. "
+                             "Movement is still tracked on every frame.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
 uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
