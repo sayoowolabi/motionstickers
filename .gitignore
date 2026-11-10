@@ -6,3 +6,7 @@ __pycache__/
 *.mp4
 *.mov
 *.avi
+clips/
+ground_truth/
+comparisons/
+results.csv
