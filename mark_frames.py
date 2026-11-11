@@ -37,24 +37,38 @@ def pick_frame_indexes(total, count, skip_start):
     return np.linspace(start, total - 1, count).astype(int).tolist()
 
 
-def mark_one_frame(frame, window):
+def mark_one_frame(frame, window, max_width=1280, max_height=720):
     """Let the user trace polygons on one frame. Returns the mask, or None
-    if skipped, or the string "quit"."""
+    if skipped, or the string "quit".
+
+    Large frames (e.g. 4K phone footage) are shown shrunk to fit the
+    screen. Clicks are scaled back up, so the saved mask is still full
+    size and lines up with the frames evaluate.py reads."""
     shapes = [[]]          # list of polygons, each a list of (x, y) points
+                           # in FULL-SIZE frame coordinates
+
+    h, w = frame.shape[:2]
+    scale = min(1.0, max_width / w, max_height / h)
+    small = cv2.resize(frame, (round(w * scale), round(h * scale)),
+                       interpolation=cv2.INTER_AREA)
 
     def on_click(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            shapes[-1].append((x, y))
+            # convert the click on the shrunk view back to full size
+            full_x = min(round(x / scale), w - 1)
+            full_y = min(round(y / scale), h - 1)
+            shapes[-1].append((full_x, full_y))
 
     cv2.setMouseCallback(window, on_click)
 
     while True:
-        view = frame.copy()
+        view = small.copy()
         for poly in shapes:
-            if len(poly) > 1:
-                cv2.polylines(view, [np.array(poly)], len(poly) > 2,
+            pts = [(round(x * scale), round(y * scale)) for x, y in poly]
+            if len(pts) > 1:
+                cv2.polylines(view, [np.array(pts)], len(pts) > 2,
                               (0, 255, 0), 1)
-            for p in poly:
+            for p in pts:
                 cv2.circle(view, p, 2, (0, 0, 255), -1)
         cv2.imshow(window, view)
 
