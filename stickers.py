@@ -8,6 +8,7 @@ and submitted independently of the interface.
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
+The sticker outline and padding (step 5) scale with the object's size.
 
 KNOWN LIMITATIONS (not handled yet, to be looked at next):
   - If something is already in the very first frame, it is baked into the
@@ -257,7 +258,36 @@ def enhance_object(frame):
 
     return sharpened
 
-def cut_out_sticker(frame, mask, outline=6, padding=10):
+def outline_size(mask, outline_frac=0.04, padding_frac=0.03,
+                 min_outline=2, min_padding=2):
+    """
+    Work out the outline and padding (in pixels) for one sticker, scaled to
+    the size of the object rather than fixed.
+
+    A fixed 6-pixel outline looks thick on a small, low-resolution object
+    but almost disappears on a 4K one, because the app shrinks big stickers
+    to fit its sticker sheet (columns about 200 px wide). Scaling both with
+    the object's longest side keeps stickers looking the same whatever the
+    video resolution.
+
+    Parameters:
+        mask:         single-channel mask, 255 = object, 0 = background
+        outline_frac: outline thickness as a share of the object's longest
+                      side (0.04 = 4%)
+        padding_frac: extra empty space around the outline, same idea
+        min_outline, min_padding: smallest values in pixels, so tiny
+                      objects still get a visible border
+
+    Returns:
+        (outline, padding) as whole numbers of pixels.
+    """
+    _, _, w, h = cv2.boundingRect(mask)
+    longest = max(w, h)
+    outline = max(min_outline, round(longest * outline_frac))
+    padding = max(min_padding, round(longest * padding_frac))
+    return outline, padding
+
+def cut_out_sticker(frame, mask, outline=None, padding=None):
     """
     Step 5 (Chloe): turn a frame + a clean mask into a sticker.
 
@@ -271,12 +301,22 @@ def cut_out_sticker(frame, mask, outline=6, padding=10):
     Parameters:
         frame:   original colour frame (BGR)
         mask:    single-channel mask, 255 = object, 0 = background
-        outline: thickness of the white border in pixels
-        padding: empty space kept around the object when cropping
-
+        outline: thickness of the white border in pixels. Left as None,
+                 it is scaled to the object's size (see outline_size)
+        padding: empty space kept around the object when cropping. Left
+                 as None, it is scaled the same way
     Returns:
         A BGRA image (4 channels) ready to save as a transparent PNG.
     """
+
+    # --- 0. Outline and padding sizes -------------------------------------
+    # Scaled to the object unless fixed values were passed in
+    auto_outline, auto_padding = outline_size(mask)
+    if outline is None:
+        outline = auto_outline
+    if padding is None:
+        padding = auto_padding
+
     # --- 1. Transparency --------------------------------------------------
     # Split the frame into its blue, green and red channels, then merge
     # them back with the mask added as a fourth (alpha) channel.
