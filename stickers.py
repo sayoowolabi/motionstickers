@@ -257,6 +257,35 @@ def enhance_object(frame):
 
     return sharpened
 
+def outline_size(mask, outline_frac=0.04, padding_frac=0.03,
+                 min_outline=2, min_padding=2):
+    """
+    Work out the outline and padding (in pixels) for one sticker, scaled to
+    the size of the object rather than fixed.
+
+    A fixed 6-pixel outline looks thick on a small, low-resolution object
+    but almost disappears on a 4K one, because the app shrinks big stickers
+    to fit its sticker sheet (columns about 200 px wide). Scaling both with
+    the object's longest side keeps stickers looking the same whatever the
+    video resolution.
+
+    Parameters:
+        mask:         single-channel mask, 255 = object, 0 = background
+        outline_frac: outline thickness as a share of the object's longest
+                      side (0.04 = 4%)
+        padding_frac: extra empty space around the outline, same idea
+        min_outline, min_padding: smallest values in pixels, so tiny
+                      objects still get a visible border
+
+    Returns:
+        (outline, padding) as whole numbers of pixels.
+    """
+    _, _, w, h = cv2.boundingRect(mask)
+    longest = max(w, h)
+    outline = max(min_outline, round(longest * outline_frac))
+    padding = max(min_padding, round(longest * padding_frac))
+    return outline, padding
+
 def cut_out_sticker(frame, mask, outline=6, padding=10):
     """
     Step 5 (Chloe): turn a frame + a clean mask into a sticker.
