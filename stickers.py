@@ -8,6 +8,7 @@ and submitted independently of the interface.
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
+The sticker outline and padding (step 5) scale with the object's size.
 
 KNOWN LIMITATIONS (not handled yet, to be looked at next):
   - If something is already in the very first frame, it is baked into the
