@@ -286,7 +286,7 @@ def outline_size(mask, outline_frac=0.04, padding_frac=0.03,
     padding = max(min_padding, round(longest * padding_frac))
     return outline, padding
 
-def cut_out_sticker(frame, mask, outline=6, padding=10):
+def cut_out_sticker(frame, mask, outline=None, padding=None):
     """
     Step 5 (Chloe): turn a frame + a clean mask into a sticker.
 
@@ -300,12 +300,22 @@ def cut_out_sticker(frame, mask, outline=6, padding=10):
     Parameters:
         frame:   original colour frame (BGR)
         mask:    single-channel mask, 255 = object, 0 = background
-        outline: thickness of the white border in pixels
-        padding: empty space kept around the object when cropping
-
+        outline: thickness of the white border in pixels. Left as None,
+                 it is scaled to the object's size (see outline_size)
+        padding: empty space kept around the object when cropping. Left
+                 as None, it is scaled the same way
     Returns:
         A BGRA image (4 channels) ready to save as a transparent PNG.
     """
+
+    # --- 0. Outline and padding sizes -------------------------------------
+    # Scaled to the object unless fixed values were passed in
+    auto_outline, auto_padding = outline_size(mask)
+    if outline is None:
+        outline = auto_outline
+    if padding is None:
+        padding = auto_padding
+
     # --- 1. Transparency --------------------------------------------------
     # Split the frame into its blue, green and red channels, then merge
     # them back with the mask added as a fourth (alpha) channel.
