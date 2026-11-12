@@ -43,10 +43,13 @@ import numpy as np
 BACKGROUND_ALPHA = 0.01
 
 
-def make_sticker(frame, gray, background):
+def make_sticker(frame, gray, background, return_mask=False):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
+
+    With return_mask=True it returns (sticker, cleaned_mask) instead, or
+    (None, None), so extract_stickers() can compare masks between stickers.
 
     Parameters:
         frame:      the original colour frame (BGR)
@@ -68,26 +71,30 @@ def make_sticker(frame, gray, background):
 
     # Step 1 (preprocessing) is now done once per frame in
     # extract_stickers(), so the frame isn't preprocessed twice.
+    nothing = (None, None) if return_mask else None
     if background is None:
-        return None
+        return nothing
 
     # Step 2 (Sayo): compare the frame with the background model
     motion_mask = background_motion_mask(gray, background)
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
-        return None
+        return nothing
 
      # Step 3 (Pati): clean the mask into one solid shape
     cleaned = clean_mask(motion_mask)
     if cleaned is None:
-        return None
+        return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
     enhanced = enhance_object(frame)
 
     # Step 5 (Chloe): cut the object out as a transparent sticker
-    return cut_out_sticker(enhanced, cleaned)
+    sticker = cut_out_sticker(enhanced, cleaned)
+    if return_mask:
+        return sticker, cleaned
+    return sticker
 
 def preprocess_frame(frame):
     """
