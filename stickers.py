@@ -394,6 +394,20 @@ def make_gif(stickers, frame_ms=400):
     )
     return buffer.getvalue()
 
+def mask_overlap(mask_a, mask_b):
+    """
+    How much two masks overlap, as intersection over union (IoU):
+    the area both cover, divided by the area either covers.
+    1 = the same shape in the same place, 0 = no overlap at all.
+
+    Used to spot near-duplicate stickers: if an object hasn't moved, its
+    mask barely changes from one sticker to the next.
+    """
+    inter = cv2.countNonZero(cv2.bitwise_and(mask_a, mask_b))
+    union = cv2.countNonZero(cv2.bitwise_or(mask_a, mask_b))
+    if union == 0:
+        return 0.0
+    return inter / union
 
 def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     """
