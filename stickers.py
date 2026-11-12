@@ -9,6 +9,7 @@ CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
 The sticker outline and padding (step 5) scale with the object's size.
+Near-duplicate stickers (an object standing still) are skipped.
 
 KNOWN LIMITATIONS (not handled yet, to be looked at next):
   - If something is already in the very first frame, it is baked into the
@@ -42,11 +43,22 @@ import numpy as np
 # Re-check this on real footage once it has been hand-marked.
 BACKGROUND_ALPHA = 0.01
 
+# Sticker de-duplication (Chloe): a new sticker is skipped when its mask
+# overlaps the last kept sticker's mask by more than this (IoU). 1.0 turns
+# de-duplication off. Tested on the burglary clip (90 stickers, every 15th
+# frame): 0.9 removed only 1, because real masks are noisy even when the
+# person is still; 0.7 removed 36 that were all near-copies of the one
+# before; 0.6 started removing poses that were clearly different.
+DUPLICATE_OVERLAP = 0.7
 
-def make_sticker(frame, gray, background):
+
+def make_sticker(frame, gray, background, return_mask=False):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
+
+    With return_mask=True it returns (sticker, cleaned_mask) instead, or
+    (None, None), so extract_stickers() can compare masks between stickers.
 
     Parameters:
         frame:      the original colour frame (BGR)
@@ -68,26 +80,30 @@ def make_sticker(frame, gray, background):
 
     # Step 1 (preprocessing) is now done once per frame in
     # extract_stickers(), so the frame isn't preprocessed twice.
+    nothing = (None, None) if return_mask else None
     if background is None:
-        return None
+        return nothing
 
     # Step 2 (Sayo): compare the frame with the background model
     motion_mask = background_motion_mask(gray, background)
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
-        return None
+        return nothing
 
      # Step 3 (Pati): clean the mask into one solid shape
     cleaned = clean_mask(motion_mask)
     if cleaned is None:
-        return None
+        return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
     enhanced = enhance_object(frame)
 
     # Step 5 (Chloe): cut the object out as a transparent sticker
-    return cut_out_sticker(enhanced, cleaned)
+    sticker = cut_out_sticker(enhanced, cleaned)
+    if return_mask:
+        return sticker, cleaned
+    return sticker
 
 def preprocess_frame(frame):
     """
@@ -394,8 +410,24 @@ def make_gif(stickers, frame_ms=400):
     )
     return buffer.getvalue()
 
+def mask_overlap(mask_a, mask_b):
+    """
+    How much two masks overlap, as intersection over union (IoU):
+    the area both cover, divided by the area either covers.
+    1 = the same shape in the same place, 0 = no overlap at all.
 
-def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
+    Used to spot near-duplicate stickers: if an object hasn't moved, its
+    mask barely changes from one sticker to the next.
+    """
+    inter = cv2.countNonZero(cv2.bitwise_and(mask_a, mask_b))
+    union = cv2.countNonZero(cv2.bitwise_or(mask_a, mask_b))
+    if union == 0:
+        return 0.0
+    return inter / union
+
+
+def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
+                     duplicate_overlap=DUPLICATE_OVERLAP):
     """
     Read a video and return a chronological list of (time_in_seconds, sticker).
 
@@ -405,35 +437,47 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
                     updated on every frame regardless.
     progress_callback: optional function(fraction) used by the interface
                        to update a progress bar.
+    duplicate_overlap: skip a new sticker if its mask overlaps the last
+                       KEPT sticker's mask by more than this (IoU, 0 to 1),
+                       so an object standing still doesn't give dozens of
+                       near-identical stickers. 1.0 keeps every sticker.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError("Could not open the video file.")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25          # fall back if unknown
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25  # fall back if unknown
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
     stickers = []
     background = None
+    last_kept_mask = None  # mask of the last sticker we kept
     index = 0
 
     while True:
         ok, frame = cap.read()
         if not ok:
-            break                                   # end of video
+            break  # end of video
 
-        #Preprocess every frame once, since the background needs every frame
+        # Preprocess every frame once, since the background needs every frame
         gray = preprocess_frame(frame)
 
-        #Generate stickers only at the interval chosen with the slider
+        # Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
-            sticker = make_sticker(frame, gray, background)
+            sticker, mask = make_sticker(frame, gray, background, return_mask=True)
             if sticker is not None:
-                stickers.append((index / fps, sticker))
+                # Skip near-duplicates: compare with the last sticker we KEPT,
+                # not the last one made, so a slow drift still adds up to a
+                # new sticker eventually
+                duplicate = (last_kept_mask is not None and
+                             mask_overlap(mask, last_kept_mask) > duplicate_overlap)
+                if not duplicate:
+                    stickers.append((index / fps, sticker))
+                    last_kept_mask = mask
 
-        #Update the background on EVERY frame. This happens after the
-        #sticker check so the current frame (and the object in it) isn't
-        #blended into the background it is being compared against
+        # Update the background on EVERY frame. This happens after the
+        # sticker check so the current frame (and the object in it) isn't
+        # blended into the background it is being compared against
         background = update_background(gray, background)
         index += 1
         if progress_callback:
