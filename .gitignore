@@ -11,3 +11,4 @@ ground_truth/
 comparisons/
 results.csv
 per_frame.csv
+results_alphas.csv
