@@ -17,7 +17,7 @@ import cv2
 import streamlit as st
 
 from pathlib import Path
-from stickers import extract_stickers, make_gif
+from stickers import DUPLICATE_OVERLAP, extract_stickers, make_gif
 
 st.set_page_config(page_title="Motion Stickers!", page_icon="✂️", layout="wide")
 
@@ -56,6 +56,11 @@ with st.sidebar:
     every_n = st.slider("Check every Nth frame", 1, 60, 15,
                         help="How often to make a sticker. Lower means more stickers. "
                              "Movement is still tracked on every frame.")
+    # De-duplication: skip a sticker that overlaps the last kept one by more
+    # than this, so an object standing still doesn't fill the sheet
+    overlap = st.slider("Skip near-duplicates", 0.5, 1.0, DUPLICATE_OVERLAP, 0.05,
+                        help="Skips a sticker if it overlaps the last one by more than this. "
+                             "Lower skips more. 1.0 keeps every sticker.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
 uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
@@ -68,7 +73,7 @@ if uploaded and st.button("Make stickers"):
 
     bar = st.progress(0.0, text="Looking for movement")
     try:
-        stickers = extract_stickers(video_path, every_n, bar.progress)
+        stickers = extract_stickers(video_path, every_n, bar.progress, overlap)
     except ValueError as err:
         st.error(f"{err} Try an MP4 file.")
         st.stop()

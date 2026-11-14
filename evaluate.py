@@ -22,7 +22,8 @@ Running-average rows (one set per alpha):
     Blind, 1st frame      the old pipeline (week 9)
     Selective, 1st frame  + selective update only
     Blind, median         + starting background from estimate_background() only
-    Selective, median     both = what the app runs now
+    Selective, median         both = what the app runs now
+    python evaluate.py footage/donny.mov --per-frame per_frame.csv
 
 Ground truth is read from ground_truth/<clip name>/frame_XXXXX_mask.png.
 For a test with a known answer, compare_methods.py --make-test writes
@@ -161,6 +162,7 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
     report_clahe(video_path, truth, use_clahe, start_ms)
 
     methods = make_methods(every_n, alphas, start)
+    per_frame = []
     scores = {name: [] for name in methods}
     extras = {name: [] for name in methods}
     times = {name: [] for name in methods}
@@ -181,18 +183,31 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
             elapsed = (time.perf_counter() - start) * 1000
 
             if index in truth:
-                scores[name].append(iou(cleaned, truth[index]))
-                extras[name].append(extra_fraction(cleaned, truth[index]))
+                frame_iou = iou(cleaned, truth[index])
+                frame_extra = extra_fraction(cleaned, truth[index])
+                scores[name].append(frame_iou)
+                extras[name].append(frame_extra)
                 # skip the first timed run: one-off warm-up cost
                 if name in warmed_up:
                     times[name].append(elapsed)
                 warmed_up.add(name)
+                #One row per marked frame, so a 0.0 can be traced to its frame
+                per_frame.append({
+                    "clip": Path(video_path).stem,
+                    "every_n": every_n,
+                    "method": name,
+                    "frame": index,
+                    "iou": round(frame_iou, 3),
+                    "extra": round(frame_extra, 3),
+                    "found_object": cleaned is not None,
+                    "ms": round(elapsed, 2),
+                })
                 if save_dir is not None:
                     save_comparison(save_dir, video_path, index, name,
                                     frame, cleaned, truth[index])
         index += 1
     cap.release()
-    return scores, extras, times
+    return scores, extras, times, per_frame
 
 
 def report_clahe(video_path, truth, use_clahe, start_ms):
@@ -251,9 +266,12 @@ def main():
     parser.add_argument("--csv", help="also save results to this CSV file")
     parser.add_argument("--save-images", metavar="FOLDER",
                         help="save colour-coded comparison images here")
+    parser.add_argument("--per-frame", metavar="CSV",
+                        help="also save every marked frame's score to this CSV")
     args = parser.parse_args()
 
     rows = []
+    frame_rows = []
     for video in args.videos:
         truth = load_ground_truth(video, args.gt)
         if not truth:
@@ -262,9 +280,10 @@ def main():
         #Run the whole clip once per frame interval. The running-average
         #rows should come out the same for every N; frame differencing won't
         for every_n in args.every_n:
-            scores, extras, times = evaluate_clip(video, truth, every_n,
-                                                  args.alphas, args.save_images,
-                                                  args.clahe)
+            scores, extras, times, per_frame = evaluate_clip(
+                video, truth, every_n, args.alphas, args.save_images,
+                args.clahe)
+            frame_rows.extend(per_frame)
             for name in scores:
                 rows.append({
                     "clip": Path(video).stem,
@@ -290,6 +309,21 @@ def main():
             writer.writeheader()
             writer.writerows(rows)
         print(f"\nSaved {args.csv}")
+
+    if args.per_frame and frame_rows:
+        #Sorted by clip, frame number, then method, so both methods for
+        #the same frame sit next to each other
+        frame_rows.sort(key=lambda r: (r["clip"], r["every_n"], r["frame"], r["method"]))
+        with open(args.per_frame, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=frame_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(frame_rows)
+
+        #Point out the worst frames so they're easy to find
+        worst = sorted(frame_rows, key=lambda r: r["iou"])[:3]
+        print(f"\nSaved {args.per_frame}. Lowest-scoring frames:")
+        for r in worst:
+            print(f"  {r['clip']} frame {r['frame']:>5}  {r['method']:<32} IoU {r['iou']}")
 
 
 if __name__ == "__main__":

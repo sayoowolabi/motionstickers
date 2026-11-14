@@ -8,6 +8,8 @@ and submitted independently of the interface.
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
+The sticker outline and padding (step 5) scale with the object's size.
+Near-duplicate stickers (an object standing still) are skipped.
 
 Week 10 changes (Sayo, steps 1-2):
   - Selective background update: the background only learns at full speed
@@ -63,11 +65,18 @@ NIGHT_BRIGHTNESS = 70
 # How many frames, spread across the clip, make the starting background.
 BACKGROUND_SAMPLES = 25
 
+# Sticker de-duplication: skip a new sticker when it overlaps the last
+# kept sticker by more than this (IoU).
+DUPLICATE_OVERLAP = 0.7
 
-def make_sticker(frame, motion_mask):
+
+def make_sticker(frame, motion_mask, return_mask=False):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
+
+    With return_mask=True it returns (sticker, cleaned_mask) instead, or
+    (None, None), so extract_stickers() can compare masks between stickers.
 
     Parameters:
         frame:       the original colour frame (BGR)
@@ -90,22 +99,27 @@ def make_sticker(frame, motion_mask):
     # frame in extract_stickers(), because the selective background update
     # needs the motion mask on every frame, not just sticker frames.
     if motion_mask is None:
-        return None
+        return (None, None) if return_mask else None
+
+    nothing = (None, None) if return_mask else None
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
-        return None
+        return nothing
 
      # Step 3 (Pati): clean the mask into one solid shape
     cleaned = clean_mask(motion_mask)
     if cleaned is None:
-        return None
+        return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
     enhanced = enhance_object(frame)
 
     # Step 5 (Chloe): cut the object out as a transparent sticker
-    return cut_out_sticker(enhanced, cleaned)
+    sticker = cut_out_sticker(enhanced, cleaned)
+    if return_mask:
+        return sticker, cleaned
+    return (sticker, cleaned) if return_mask else sticker
 
 def preprocess_frame(frame, use_clahe=None):
     """
@@ -372,7 +386,36 @@ def enhance_object(frame):
 
     return sharpened
 
-def cut_out_sticker(frame, mask, outline=6, padding=10):
+def outline_size(mask, outline_frac=0.04, padding_frac=0.03,
+                 min_outline=2, min_padding=2):
+    """
+    Work out the outline and padding (in pixels) for one sticker, scaled to
+    the size of the object rather than fixed.
+
+    A fixed 6-pixel outline looks thick on a small, low-resolution object
+    but almost disappears on a 4K one, because the app shrinks big stickers
+    to fit its sticker sheet (columns about 200 px wide). Scaling both with
+    the object's longest side keeps stickers looking the same whatever the
+    video resolution.
+
+    Parameters:
+        mask:         single-channel mask, 255 = object, 0 = background
+        outline_frac: outline thickness as a share of the object's longest
+                      side (0.04 = 4%)
+        padding_frac: extra empty space around the outline, same idea
+        min_outline, min_padding: smallest values in pixels, so tiny
+                      objects still get a visible border
+
+    Returns:
+        (outline, padding) as whole numbers of pixels.
+    """
+    _, _, w, h = cv2.boundingRect(mask)
+    longest = max(w, h)
+    outline = max(min_outline, round(longest * outline_frac))
+    padding = max(min_padding, round(longest * padding_frac))
+    return outline, padding
+
+def cut_out_sticker(frame, mask, outline=None, padding=None):
     """
     Step 5 (Chloe): turn a frame + a clean mask into a sticker.
 
@@ -386,12 +429,22 @@ def cut_out_sticker(frame, mask, outline=6, padding=10):
     Parameters:
         frame:   original colour frame (BGR)
         mask:    single-channel mask, 255 = object, 0 = background
-        outline: thickness of the white border in pixels
-        padding: empty space kept around the object when cropping
-
+        outline: thickness of the white border in pixels. Left as None,
+                 it is scaled to the object's size (see outline_size)
+        padding: empty space kept around the object when cropping. Left
+                 as None, it is scaled the same way
     Returns:
         A BGRA image (4 channels) ready to save as a transparent PNG.
     """
+
+    # --- 0. Outline and padding sizes -------------------------------------
+    # Scaled to the object unless fixed values were passed in
+    auto_outline, auto_padding = outline_size(mask)
+    if outline is None:
+        outline = auto_outline
+    if padding is None:
+        padding = auto_padding
+
     # --- 1. Transparency --------------------------------------------------
     # Split the frame into its blue, green and red channels, then merge
     # them back with the mask added as a fourth (alpha) channel.
@@ -469,8 +522,24 @@ def make_gif(stickers, frame_ms=400):
     )
     return buffer.getvalue()
 
+def mask_overlap(mask_a, mask_b):
+    """
+    How much two masks overlap, as intersection over union (IoU):
+    the area both cover, divided by the area either covers.
+    1 = the same shape in the same place, 0 = no overlap at all.
 
-def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
+    Used to spot near-duplicate stickers: if an object hasn't moved, its
+    mask barely changes from one sticker to the next.
+    """
+    inter = cv2.countNonZero(cv2.bitwise_and(mask_a, mask_b))
+    union = cv2.countNonZero(cv2.bitwise_or(mask_a, mask_b))
+    if union == 0:
+        return 0.0
+    return inter / union
+
+
+def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
+                     duplicate_overlap=DUPLICATE_OVERLAP):
     """
     Read a video and return a chronological list of (time_in_seconds, sticker).
 
@@ -480,12 +549,16 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
                     updated on every frame regardless.
     progress_callback: optional function(fraction) used by the interface
                        to update a progress bar.
+    duplicate_overlap: skip a new sticker if its mask overlaps the last
+                       KEPT sticker's mask by more than this (IoU, 0 to 1),
+                       so an object standing still doesn't give dozens of
+                       near-identical stickers. 1.0 keeps every sticker.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError("Could not open the video file.")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25          # fall back if unknown
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25  # fall back if unknown
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
     #Starting background (median of frames across the clip) and the
@@ -494,12 +567,13 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     background, use_clahe = estimate_background(video_path)
 
     stickers = []
+    last_kept_mask = None  # mask of the last sticker we kept
     index = 0
 
     while True:
         ok, frame = cap.read()
         if not ok:
-            break                                   # end of video
+            break  # end of video
 
         #Preprocess every frame once, since the background needs every frame
         gray = preprocess_frame(frame, use_clahe)
@@ -510,11 +584,18 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
         if background is not None:
             motion_mask = background_motion_mask(gray, background)
 
-        #Generate stickers only at the interval chosen with the slider
+        # Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
-            sticker = make_sticker(frame, motion_mask)
+            sticker, mask = make_sticker(frame, motion_mask, return_mask=True)
             if sticker is not None:
-                stickers.append((index / fps, sticker))
+                # Skip near-duplicates: compare with the last sticker we KEPT,
+                # not the last one made, so a slow drift still adds up to a
+                # new sticker eventually
+                duplicate = (last_kept_mask is not None and
+                             mask_overlap(mask, last_kept_mask) > duplicate_overlap)
+                if not duplicate:
+                    stickers.append((index / fps, sticker))
+                    last_kept_mask = mask
 
         #Update the background on EVERY frame. This happens after the
         #sticker check so the current frame (and the object in it) isn't
