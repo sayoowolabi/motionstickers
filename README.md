@@ -17,7 +17,8 @@ The project uses classical image-processing techniques only (no machine learning
 ## How it's supposed to work
 1. **Preprocessing:** greyscale, blur, contrast enhancement for night footage
 2. **Motion detection:** compare each frame with a running-average
-   background (`cv2.accumulateWeighted`, updated every frame) to find what changed
+   background (`cv2.accumulateWeighted`, updated every frame) to find what changed.
+   The background starts as the median of frames across the clip and is only updated at full speed where nothing is moving (selective update)
 3. **Mask cleanup:** thresholding and morphology
 4. **Cutout:** keep the moving object, make the background transparent,
    add a white sticker outline
