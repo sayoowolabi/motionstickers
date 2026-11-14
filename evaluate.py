@@ -16,6 +16,13 @@ Run with:
     python evaluate.py footage/donny.mov --save-images comparisons
     python evaluate.py footage/donny.mov --every-n 1 5 15 30
     python evaluate.py footage/donny.mov --alphas 0.005 0.01 0.02 0.05 0.1
+    python evaluate.py footage/dusk.mp4 --clahe per-frame   # old CLAHE rule
+
+Running-average rows (one set per alpha):
+    Blind, 1st frame      the old pipeline (week 9)
+    Selective, 1st frame  + selective update only
+    Blind, median         + starting background from estimate_background() only
+    Selective, median     both = what the app runs now
 
 Ground truth is read from ground_truth/<clip name>/frame_XXXXX_mask.png.
 For a test with a known answer, compare_methods.py --make-test writes
@@ -34,8 +41,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from stickers import (BACKGROUND_ALPHA, background_motion_mask, clean_mask,
-                      create_motion_mask, preprocess_frame, update_background)
+from stickers import (BACKGROUND_ALPHA, NIGHT_BRIGHTNESS, background_motion_mask,
+                      clean_mask, create_motion_mask, estimate_background,
+                      preprocess_frame, update_background)
 
 
 # ---------------------------------------------------------------- methods
@@ -58,30 +66,44 @@ class FrameDifferencing:
 
 
 class RunningAverage:
-    """The new pipeline: compare each frame with the running-average
-    background, then update the background with that frame. Uses the same
-    functions as extract_stickers() in stickers.py, so this scores the code
-    that actually runs in the app. The background is updated on every
-    frame, so the result does not depend on every_n."""
+    """Compare each frame with the running-average background, then update
+    the background with that frame. Uses the same functions as
+    extract_stickers() in stickers.py, so this scores the code that
+    actually runs in the app. The background is updated on every frame,
+    so the result does not depend on every_n.
 
-    def __init__(self, alpha=BACKGROUND_ALPHA):
+    start:     None = the first frame becomes the background (old), or a
+               starting background from estimate_background() (new)
+    selective: False = every pixel updated the same (old "blind" update),
+               True = moving pixels updated more slowly (new)"""
+
+    def __init__(self, alpha=BACKGROUND_ALPHA, start=None, selective=False):
         self.alpha = alpha
-        self.background = None
+        self.selective = selective
+        #copy, so methods sharing the same start don't update each other's
+        self.background = None if start is None else start.copy()
 
     def update(self, gray):
         #Same order as extract_stickers(): compare first, then update
         mask = None
         if self.background is not None:
             mask = background_motion_mask(gray, self.background)
-        self.background = update_background(gray, self.background, self.alpha)
+        self.background = update_background(gray, self.background, self.alpha,
+                                            mask if self.selective else None)
         return mask
 
 
-def make_methods(every_n, alphas=(BACKGROUND_ALPHA,)):
+def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None):
+    """The old methods plus the current pipeline. Each change is also scored
+    on its own (2 starts x 2 update rules), so its effect can be seen."""
     methods = {f"Frame differencing (N={every_n})": FrameDifferencing(every_n)}
-    #One running-average entry per learning rate, so they can be compared
+    #Four running-average entries per learning rate, so they can be compared
     for alpha in alphas:
-        methods[f"Running average (a={alpha})"] = RunningAverage(alpha)
+        methods[f"Blind, 1st frame (a={alpha})"] = RunningAverage(alpha)
+        methods[f"Selective, 1st frame (a={alpha})"] = RunningAverage(alpha, None, True)
+        if start is not None:
+            methods[f"Blind, median (a={alpha})"] = RunningAverage(alpha, start)
+            methods[f"Selective, median (a={alpha})"] = RunningAverage(alpha, start, True)
     return methods
 
 
@@ -123,9 +145,22 @@ def load_ground_truth(video_path, gt_root):
     return truth
 
 
-def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None):
-    """Run every method over the clip, scoring the marked frames."""
-    methods = make_methods(every_n, alphas)
+def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
+                  clahe="clip"):
+    """Run every method over the clip, scoring the marked frames.
+
+    clahe: "clip" = decide night contrast once for the clip, like the app
+           does now; "per-frame" = the old rule, to measure the flicker."""
+    #Starting background + clip-wide CLAHE decision, same as extract_stickers().
+    #Done once per clip and shared, so it is timed separately
+    start_time = time.perf_counter()
+    start, use_clahe = estimate_background(str(video_path))
+    start_ms = (time.perf_counter() - start_time) * 1000
+    if clahe == "per-frame":
+        use_clahe = None
+    report_clahe(video_path, truth, use_clahe, start_ms)
+
+    methods = make_methods(every_n, alphas, start)
     scores = {name: [] for name in methods}
     extras = {name: [] for name in methods}
     times = {name: [] for name in methods}
@@ -137,7 +172,7 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None):
         ok, frame = cap.read()
         if not ok or index > max(truth):
             break
-        gray = preprocess_frame(frame)
+        gray = preprocess_frame(frame, use_clahe)
 
         for name, method in methods.items():
             start = time.perf_counter()
@@ -158,6 +193,27 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None):
         index += 1
     cap.release()
     return scores, extras, times
+
+
+def report_clahe(video_path, truth, use_clahe, start_ms):
+    """CLAHE flicker check: print the clip's brightness range and how often
+    the old per-frame rule (mean < NIGHT_BRIGHTNESS) would switch CLAHE on
+    or off over the scored part of the clip. Many switches = flicker."""
+    cap = cv2.VideoCapture(str(video_path))
+    means = []
+    while len(means) <= max(truth):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        means.append(np.mean(preprocess_frame(frame, use_clahe=False)))
+    cap.release()
+    night = [m < NIGHT_BRIGHTNESS for m in means]
+    switches = sum(a != b for a, b in zip(night, night[1:]))
+    decision = {True: "on", False: "off", None: "per frame"}[use_clahe]
+    print(f"{Path(video_path).stem}: brightness {min(means):.0f}-{max(means):.0f} "
+          f"(mean {np.mean(means):.0f}), per-frame rule would switch CLAHE "
+          f"{switches} times; CLAHE used: {decision}; "
+          f"starting background took {start_ms:.0f} ms")
 
 
 def save_comparison(save_dir, video_path, index, name, frame, predicted, truth):
@@ -188,6 +244,9 @@ def main():
     parser.add_argument("--alphas", type=float, nargs="+",
                         default=[BACKGROUND_ALPHA],
                         help="running-average learning rate(s) to test")
+    parser.add_argument("--clahe", choices=["clip", "per-frame"], default="clip",
+                        help="decide night contrast once per clip (the app) "
+                             "or per frame (the old rule, to measure flicker)")
     parser.add_argument("--gt", default="ground_truth")
     parser.add_argument("--csv", help="also save results to this CSV file")
     parser.add_argument("--save-images", metavar="FOLDER",
@@ -204,7 +263,8 @@ def main():
         #rows should come out the same for every N; frame differencing won't
         for every_n in args.every_n:
             scores, extras, times = evaluate_clip(video, truth, every_n,
-                                                  args.alphas, args.save_images)
+                                                  args.alphas, args.save_images,
+                                                  args.clahe)
             for name in scores:
                 rows.append({
                     "clip": Path(video).stem,

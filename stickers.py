@@ -9,16 +9,23 @@ CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
 
-KNOWN LIMITATIONS (not handled yet, to be looked at next):
-  - If something is already in the very first frame, it is baked into the
-    starting background and leaves a "ghost" until the background catches
-    up (about 1 / BACKGROUND_ALPHA frames). A warm-up period before making
-    stickers could fix this, but it would miss motion at the very start
-    of short clips.
-  - preprocess_frame() only applies CLAHE when a frame's mean brightness is
-    below 70. If a clip hovers around 70, CLAHE switches on and off between
-    frames, and the whole frame can look different from the averaged
-    background. Needs checking on night footage.
+Week 10 changes (Sayo, steps 1-2):
+  - Selective background update: the background only learns at full speed
+    where nothing is moving, so people who stand still no longer fade out
+    and don't leave a trail when they move on.
+  - The starting background is the median of frames spread across the whole
+    clip, not the first frame, so someone already in frame 1 is no longer
+    baked into the background as a ghost.
+  - CLAHE (night contrast) is switched on or off once per clip instead of
+    per frame, so clips that hover around the brightness limit don't flicker.
+
+KNOWN LIMITATIONS:
+  - If something stays in the same place for more than half of the clip,
+    the median treats it as background. If it then leaves, the empty spot
+    shows up as motion until the slow update absorbs it.
+  - A permanent change (door left open, light switched on) takes about
+    1 / (BACKGROUND_ALPHA * MOVING_ALPHA_FACTOR) frames to be absorbed,
+    because it counts as "moving" and is learned at the slow rate.
 """
 
 import io
@@ -41,17 +48,31 @@ import numpy as np
 # Re-check this on real footage once it has been hand-marked.
 BACKGROUND_ALPHA = 0.01
 
+# Selective update: pixels marked as moving are still blended in, but this
+# many times slower (0.1 x 0.01 = 0.001, roughly the last 1000 frames).
+# The selective update in Piccardi (2004, Section 2.1, eq. 3, from Koller
+# et al., 1994) doesn't update moving pixels at all. We use a slow rate
+# instead because, with no update, anything moved and left there (a door
+# left open, a light switched on, someone in frame 1 who walks away) would
+# be flagged as motion forever: a permanent ghost (Cucchiara et al., 2003).
+MOVING_ALPHA_FACTOR = 0.1
 
-def make_sticker(frame, gray, background):
+# Frames below this mean brightness count as night footage and get CLAHE.
+NIGHT_BRIGHTNESS = 70
+
+# How many frames, spread across the clip, make the starting background.
+BACKGROUND_SAMPLES = 25
+
+
+def make_sticker(frame, motion_mask):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
 
     Parameters:
-        frame:      the original colour frame (BGR)
-        gray:       the same frame after preprocess_frame()
-        background: the running-average background from update_background()
-                    (float32), or None if there isn't one yet
+        frame:       the original colour frame (BGR)
+        motion_mask: the frame's motion mask from background_motion_mask(),
+                     or None if there is no background yet
 
     Our pipeline, built up from the research:
       1. Preprocess: greyscale, blur, night-frame check,
@@ -65,13 +86,11 @@ def make_sticker(frame, gray, background):
          bounding box, add a white outline by dilating the mask.
     """
 
-    # Step 1 (preprocessing) is now done once per frame in
-    # extract_stickers(), so the frame isn't preprocessed twice.
-    if background is None:
+    # Steps 1 and 2 (preprocessing and the motion mask) are done once per
+    # frame in extract_stickers(), because the selective background update
+    # needs the motion mask on every frame, not just sticker frames.
+    if motion_mask is None:
         return None
-
-    # Step 2 (Sayo): compare the frame with the background model
-    motion_mask = background_motion_mask(gray, background)
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
@@ -88,18 +107,20 @@ def make_sticker(frame, gray, background):
     # Step 5 (Chloe): cut the object out as a transparent sticker
     return cut_out_sticker(enhanced, cleaned)
 
-def preprocess_frame(frame):
+def preprocess_frame(frame, use_clahe=None):
     """
     Preprocess a video frame before motion detection.
 
     Converts the frame to greyscale and applies Gaussian blur to reduce
-    noise. The average brightness is then checked to determine whether
-    the frame is dark. If it is a night frame, CLAHE is applied to
-    improve the contrast and make objects easier to distinguish from
-    the background.
+    noise. If it is night footage, CLAHE is applied to improve the
+    contrast and make objects easier to distinguish from the background.
 
     Parameters:
-        frame: The original colour video frame.
+        frame:     The original colour video frame.
+        use_clahe: True/False = the decision already made for the whole
+                   clip (see estimate_background()). None = decide from
+                   this frame's own brightness (the old per-frame rule,
+                   which can flicker on clips near NIGHT_BRIGHTNESS).
 
     Returns:
         The preprocessed greyscale frame.
@@ -110,13 +131,82 @@ def preprocess_frame(frame):
     #Applies a small Gaussian blur to remove tiny pixel-level changes
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    #Calculates the average brightness of the frame.
-    if np.mean(gray) < 70:
+    #No clip-wide decision given, so check this frame's average brightness
+    if use_clahe is None:
+        use_clahe = np.mean(gray) < NIGHT_BRIGHTNESS
+
+    if use_clahe:
         #increases the contrast of dark footage to better distinguish between objects
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray = clahe.apply(gray)
+        gray = night_contrast(gray)
 
     return gray
+
+
+def night_contrast(gray):
+    """CLAHE on a greyscale frame, used for night footage."""
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    return clahe.apply(gray)
+
+
+def estimate_background(video_path, samples=BACKGROUND_SAMPLES):
+    """
+    Build the starting background before the main pass over the video.
+
+    Reads `samples` frames spread evenly across the whole clip and takes
+    the median of each pixel. Someone walking through the scene only
+    covers a given pixel in a few of those frames, so the median picks the
+    empty scene, even if they are already there in frame 1. This replaces
+    starting from the first frame, which baked anyone in it into the
+    background as a ghost (Cucchiara et al., 2003). Unlike a warm-up
+    period, no frames are skipped, so motion at the very start of a short
+    clip still makes stickers. Median background: Piccardi (2004), Section
+    2.2 (temporal median filter, which works even on sub-sampled frames);
+    taking the median of ~25 frames spread over the clip: LearnOpenCV (2019).
+    It only works if each pixel shows the empty scene in at least half of
+    the samples.
+
+    The same frames are used to decide once, for the whole clip, whether
+    it is night footage, so CLAHE doesn't switch on and off between frames
+    whose brightness hovers around NIGHT_BRIGHTNESS.
+
+    Returns:
+        (background as float32, use_clahe), or (None, None) if no frames
+        could be read. Then extract_stickers() falls back to the old
+        behaviour (first frame as background, CLAHE decided per frame).
+    """
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    #Evenly spaced frame numbers from the first to the last frame
+    wanted = set(np.linspace(0, max(total - 1, 0), samples).astype(int).tolist())
+
+    #Reads through the clip in order instead of jumping to each frame
+    #(cap.set): on the 4K test clip jumping took 23-44 s, reading in order
+    #21 s, and it doesn't depend on jumping landing on the exact frame.
+    #grab() moves to the next frame; retrieve() is only called on the ones
+    #we keep, which skips converting all the others
+    grays = []
+    index = 0
+    while cap.grab():
+        if index in wanted:
+            ok, frame = cap.retrieve()
+            if ok:
+                #CLAHE is decided below, once all the samples are in
+                grays.append(preprocess_frame(frame, use_clahe=False))
+        index += 1
+    cap.release()
+
+    if not grays:
+        return None, None
+
+    #Night clip if the typical (median) sample is dark
+    use_clahe = bool(np.median([np.mean(g) for g in grays]) < NIGHT_BRIGHTNESS)
+    if use_clahe:
+        grays = [night_contrast(g) for g in grays]
+
+    #Median of each pixel across the samples (axis 0 = the sample number)
+    background = np.median(np.stack(grays), axis=0).astype(np.float32)
+    return background, use_clahe
 
 def create_motion_mask(current_gray, prev_gray):
     """
@@ -139,7 +229,7 @@ def create_motion_mask(current_gray, prev_gray):
     return motion_mask
 
 
-def update_background(gray, background, alpha=BACKGROUND_ALPHA):
+def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None):
     """
     Update the running-average background model with a new frame.
 
@@ -148,11 +238,22 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA):
     This should be called on EVERY frame (not just the frames we make
     stickers from) so the background stays an accurate picture of the scene.
 
+    Selective update: if the frame's motion mask is given, only the pixels
+    where nothing is moving are updated at the normal rate. Moving pixels
+    are updated MOVING_ALPHA_FACTOR times slower. Without this, a person
+    who stands still is slowly blended into the background, so they fade
+    out of the mask, and when they walk off, the copy of them left in the
+    background shows up as a trail. Selective update: Koller et al. (1994),
+    as described in Piccardi (2004), Section 2.1.
+
     Parameters:
-        gray:       the current frame after preprocess_frame()
-        background: the current background model (float32), or None on
-                    the first frame
-        alpha:      learning rate, how quickly the background adapts
+        gray:        the current frame after preprocess_frame()
+        background:  the current background model (float32), or None on
+                     the first frame
+        alpha:       learning rate, how quickly the background adapts
+        motion_mask: the raw mask from background_motion_mask() for this
+                     frame, or None to update every pixel the same (the
+                     old "blind" update)
 
     Returns:
         The updated background model (float32).
@@ -163,8 +264,22 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA):
     if background is None:
         return gray.astype(np.float32)
 
-    #Blends the current frame into the background (updates it in place)
-    cv2.accumulateWeighted(gray, background, alpha)
+    if motion_mask is None:
+        #Blind update: blends the whole frame into the background (in place)
+        cv2.accumulateWeighted(gray, background, alpha)
+        return background
+
+    #The threshold misses the soft, blurred edges of a moving object, so the
+    #mask is grown a little to keep those edges out of the background too.
+    #The raw mask is used rather than clean_mask(), which keeps only the
+    #largest shape and would let a second, smaller person fade out
+    grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    moving = cv2.dilate(motion_mask, grow)
+
+    #accumulateWeighted only changes the pixels where the mask is non-zero,
+    #so it is run twice: full rate on still pixels, slow rate on moving ones
+    cv2.accumulateWeighted(gray, background, alpha, mask=cv2.bitwise_not(moving))
+    cv2.accumulateWeighted(gray, background, alpha * MOVING_ALPHA_FACTOR, mask=moving)
     return background
 
 
@@ -373,8 +488,12 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
     fps = cap.get(cv2.CAP_PROP_FPS) or 25          # fall back if unknown
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
+    #Starting background (median of frames across the clip) and the
+    #clip-wide night/CLAHE decision. If this fails, background is None and
+    #the first frame becomes the background, as before
+    background, use_clahe = estimate_background(video_path)
+
     stickers = []
-    background = None
     index = 0
 
     while True:
@@ -383,18 +502,24 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
             break                                   # end of video
 
         #Preprocess every frame once, since the background needs every frame
-        gray = preprocess_frame(frame)
+        gray = preprocess_frame(frame, use_clahe)
+
+        #Step 2: the motion mask is needed on every frame now, because the
+        #selective update uses it to decide which pixels to learn
+        motion_mask = None
+        if background is not None:
+            motion_mask = background_motion_mask(gray, background)
 
         #Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
-            sticker = make_sticker(frame, gray, background)
+            sticker = make_sticker(frame, motion_mask)
             if sticker is not None:
                 stickers.append((index / fps, sticker))
 
         #Update the background on EVERY frame. This happens after the
         #sticker check so the current frame (and the object in it) isn't
         #blended into the background it is being compared against
-        background = update_background(gray, background)
+        background = update_background(gray, background, motion_mask=motion_mask)
         index += 1
         if progress_callback:
             progress_callback(min(index / total, 1.0))
