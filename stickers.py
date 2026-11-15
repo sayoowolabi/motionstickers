@@ -37,6 +37,8 @@ Week 11 changes (Chloe, from the final evaluation):
   - SHADOW_DARKEST 0.4 -> 0.7, so dark clothing no longer counts as shadow.
   - extract_stickers() takes the app's "Night mode" and "Shadow removal"
     settings (None = automatic).
+  - clean_mask() drops shapes smaller than RELATIVE_MIN_SIZE of the biggest
+    one, so leftover blobs don't appear as floating pieces in stickers.
 
 KNOWN LIMITATIONS:
   - If something stays in the same place for more than half of the clip,
@@ -114,6 +116,12 @@ COLOUR_MIN_SATURATION = 20   # 0-255 scale
 # and too small to filter noise blobs on 4K footage.
 MIN_OBJECT_FRAC = 0.0005
 MIN_OBJECT_PIXELS = 50       # never go below this, even on tiny frames
+# clean_mask() keeps every shape at least this share of the biggest one, so
+# a second object is kept (the dog is 49-76% of its owner's size) but small
+# leftover blobs (ghost patches, glare) aren't glued into the sticker.
+# Burglary clip: IoU 0.532 -> 0.547, extra 0.391 -> 0.374 (0.5 would
+# sometimes drop the dog).
+RELATIVE_MIN_SIZE = 0.3
 
 # How many frames, spread across the clip, make the starting background.
 BACKGROUND_SAMPLES = 25
@@ -553,6 +561,12 @@ def clean_mask(mask, min_area=None, frame=None, background=None):
     objects = [c for c in contours if cv2.contourArea(c) >= min_area]
     if not objects:
         return None
+
+    #Keeps only shapes that are a reasonable size next to the biggest one,
+    #so a second object (the dog next to its owner) is kept but small
+    #leftover blobs (a ghost patch, window glare) don't end up in the sticker
+    largest = max(cv2.contourArea(c) for c in objects)
+    objects = [c for c in objects if cv2.contourArea(c) >= RELATIVE_MIN_SIZE * largest]
 
     #Draws those regions filled in (thickness=-1) onto a blank mask
     filled = np.zeros_like(mask)
