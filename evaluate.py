@@ -22,7 +22,10 @@ Running-average rows (one set per alpha):
     Blind, 1st frame      the old pipeline (week 9)
     Selective, 1st frame  + selective update only
     Blind, median         + starting background from estimate_background() only
-    Selective, median         both = what the app runs now
+    Selective, median         both (Sayo's version)
+    App: + shadows            Selective, median + Pati's shadow removal,
+                              exactly what the app runs now (on night clips
+                              shadow removal is skipped, like in the app)
     python evaluate.py footage/donny.mov --per-frame per_frame.csv
 
 Ground truth is read from ground_truth/<clip name>/frame_XXXXX_mask.png.
@@ -94,7 +97,32 @@ class RunningAverage:
         return mask
 
 
-def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None):
+class AppPipeline(RunningAverage):
+    """What the app runs now: selective update from the median start, plus
+    Pati's shadow removal against a colour copy of the background (skipped
+    on night clips, as in make_sticker()). Unlike the other methods it also
+    needs the colour frame, so update() returns (raw mask, cleaned mask)."""
+
+    def __init__(self, alpha, start, colour_start, night):
+        super().__init__(alpha, start, selective=True)
+        self.colour = colour_start.copy()
+        self.night = night
+
+    def update(self, gray, frame):
+        #Same order as extract_stickers(): compare and clean first, using
+        #the backgrounds from before this frame, then update both
+        mask = background_motion_mask(gray, self.background)
+        if self.night:
+            cleaned = clean_mask(mask)
+        else:
+            cleaned = clean_mask(mask, frame=frame, background=self.colour)
+        self.background = update_background(gray, self.background, self.alpha, mask)
+        self.colour = update_background(frame, self.colour, self.alpha, mask)
+        return mask, cleaned
+
+
+def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None,
+                 colour_start=None, night=False):
     """The old methods plus the current pipeline. Each change is also scored
     on its own (2 starts x 2 update rules), so its effect can be seen."""
     methods = {f"Frame differencing (N={every_n})": FrameDifferencing(every_n)}
@@ -105,6 +133,9 @@ def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None):
         if start is not None:
             methods[f"Blind, median (a={alpha})"] = RunningAverage(alpha, start)
             methods[f"Selective, median (a={alpha})"] = RunningAverage(alpha, start, True)
+            if colour_start is not None:
+                methods[f"App: + shadows (a={alpha})"] = AppPipeline(
+                    alpha, start, colour_start, night)
     return methods
 
 
@@ -155,13 +186,14 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
     #Starting background + clip-wide CLAHE decision, same as extract_stickers().
     #Done once per clip and shared, so it is timed separately
     start_time = time.perf_counter()
-    start, use_clahe = estimate_background(str(video_path))
+    start, use_clahe, colour_start = estimate_background(str(video_path),
+                                                         return_colour=True)
     start_ms = (time.perf_counter() - start_time) * 1000
     if clahe == "per-frame":
         use_clahe = None
     report_clahe(video_path, truth, use_clahe, start_ms)
 
-    methods = make_methods(every_n, alphas, start)
+    methods = make_methods(every_n, alphas, start, colour_start, bool(use_clahe))
     per_frame = []
     scores = {name: [] for name in methods}
     extras = {name: [] for name in methods}
@@ -178,8 +210,11 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
 
         for name, method in methods.items():
             start = time.perf_counter()
-            raw = method.update(gray)
-            cleaned = clean_mask(raw) if raw is not None else None
+            if isinstance(method, AppPipeline):
+                raw, cleaned = method.update(gray, frame)
+            else:
+                raw = method.update(gray)
+                cleaned = clean_mask(raw) if raw is not None else None
             elapsed = (time.perf_counter() - start) * 1000
 
             if index in truth:
