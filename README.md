@@ -128,7 +128,9 @@ All `results*.csv`, `per_frame*.csv` and `comparisons*/` files are ignored by gi
 - [x] Motion detection (running-average background)
 - [x] Mask cleanup and cutouts
 - [ ] Night-time footage handling
-- [ ] Evaluation (scripts done; synthetic clip scored, real footage still to be hand-marked)
+- [x] Sticker outline scaling and de-duplication
+- [x] Evaluation tools, and six real clips hand-marked and scored (before/after selective background update)
+- [ ] Final evaluation after the shadow and night changes
 
 ## References
 - Streamlit 
