@@ -24,8 +24,9 @@ Running-average rows (one set per alpha):
     Blind, median         + starting background from estimate_background() only
     Selective, median         both (Sayo's version)
     App: + shadows            Selective, median + Pati's shadow removal,
-                              exactly what the app runs now (on night clips
-                              shadow removal is skipped, like in the app)
+                              exactly what the app runs now (shadow removal
+                              is skipped on footage with no colour, like in
+                              the app on its Auto setting)
     python evaluate.py footage/donny.mov --per-frame per_frame.csv
 
 Ground truth is read from ground_truth/<clip name>/frame_XXXXX_mask.png.
@@ -47,6 +48,7 @@ import numpy as np
 
 from stickers import (BACKGROUND_ALPHA, NIGHT_BRIGHTNESS, background_motion_mask,
                       clean_mask, create_motion_mask, estimate_background,
+                      has_colour,
                       preprocess_frame, update_background)
 
 
@@ -100,29 +102,29 @@ class RunningAverage:
 class AppPipeline(RunningAverage):
     """What the app runs now: selective update from the median start, plus
     Pati's shadow removal against a colour copy of the background (skipped
-    on night clips, as in make_sticker()). Unlike the other methods it also
+    on footage with no colour, as in the app). Unlike the other methods it also
     needs the colour frame, so update() returns (raw mask, cleaned mask)."""
 
-    def __init__(self, alpha, start, colour_start, night):
+    def __init__(self, alpha, start, colour_start, shadows):
         super().__init__(alpha, start, selective=True)
         self.colour = colour_start.copy()
-        self.night = night
+        self.shadows = shadows
 
     def update(self, gray, frame):
         #Same order as extract_stickers(): compare and clean first, using
         #the backgrounds from before this frame, then update both
         mask = background_motion_mask(gray, self.background)
-        if self.night:
-            cleaned = clean_mask(mask)
-        else:
+        if self.shadows:
             cleaned = clean_mask(mask, frame=frame, background=self.colour)
+        else:
+            cleaned = clean_mask(mask)
         self.background = update_background(gray, self.background, self.alpha, mask)
         self.colour = update_background(frame, self.colour, self.alpha, mask)
         return mask, cleaned
 
 
 def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None,
-                 colour_start=None, night=False):
+                 colour_start=None, shadows=False):
     """The old methods plus the current pipeline. Each change is also scored
     on its own (2 starts x 2 update rules), so its effect can be seen."""
     methods = {f"Frame differencing (N={every_n})": FrameDifferencing(every_n)}
@@ -135,7 +137,7 @@ def make_methods(every_n, alphas=(BACKGROUND_ALPHA,), start=None,
             methods[f"Selective, median (a={alpha})"] = RunningAverage(alpha, start, True)
             if colour_start is not None:
                 methods[f"App: + shadows (a={alpha})"] = AppPipeline(
-                    alpha, start, colour_start, night)
+                    alpha, start, colour_start, shadows)
     return methods
 
 
@@ -193,7 +195,9 @@ def evaluate_clip(video_path, truth, every_n, alphas, save_dir=None,
         use_clahe = None
     report_clahe(video_path, truth, use_clahe, start_ms)
 
-    methods = make_methods(every_n, alphas, start, colour_start, bool(use_clahe))
+    shadows = has_colour(colour_start)
+    print(f"{Path(video_path).stem}: shadow removal {'on' if shadows else 'off (no colour)'}")
+    methods = make_methods(every_n, alphas, start, colour_start, shadows)
     per_frame = []
     scores = {name: [] for name in methods}
     extras = {name: [] for name in methods}
