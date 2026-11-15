@@ -48,7 +48,7 @@ import numpy as np
 
 from stickers import (BACKGROUND_ALPHA, NIGHT_BRIGHTNESS, background_motion_mask,
                       clean_mask, create_motion_mask, estimate_background,
-                      has_colour,
+                      has_colour, drop_ghosts, GHOST_GAP, GHOST_DIFF,
                       preprocess_frame, update_background)
 
 
@@ -109,6 +109,7 @@ class AppPipeline(RunningAverage):
         super().__init__(alpha, start, selective=True)
         self.colour = colour_start.copy()
         self.shadows = shadows
+        self.recent = []      # last GHOST_GAP frames, for the ghost check
 
     def update(self, gray, frame):
         #Same order as extract_stickers(): compare and clean first, using
@@ -118,6 +119,14 @@ class AppPipeline(RunningAverage):
             cleaned = clean_mask(mask, frame=frame, background=self.colour)
         else:
             cleaned = clean_mask(mask)
+        #Ghost check, as in extract_stickers()
+        if cleaned is not None and len(self.recent) == GHOST_GAP:
+            _, change = cv2.threshold(cv2.absdiff(gray, self.recent[0]),
+                                      GHOST_DIFF, 255, cv2.THRESH_BINARY)
+            cleaned = drop_ghosts(cleaned, change)
+        self.recent.append(gray)
+        if len(self.recent) > GHOST_GAP:
+            self.recent.pop(0)
         self.background = update_background(gray, self.background, self.alpha, mask)
         self.colour = update_background(frame, self.colour, self.alpha, mask)
         return mask, cleaned
