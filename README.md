@@ -106,9 +106,13 @@ The running-average rows separate Sayo's changes: *Blind, 1st frame* is the old 
 | `--gt FOLDER` | read ground truth from another folder |
 
 ### 3. Keep each run
-Give each run its own names, so a later run doesn't overwrite an earlier one,
-e.g. `--csv results_final.csv --per-frame per_frame_final.csv --save-images comparisons_final`.
-All `results*.csv`, `per_frame*.csv` and `comparisons*/` files are ignored by git.
+Save each run in its own folder under `evaluation/`, so a later run doesn't
+overwrite an earlier one. Create the folder first:
+```
+mkdir evaluation\final
+python evaluate.py footage/burglary.mp4 --csv evaluation/final/results.csv --per-frame evaluation/final/per_frame.csv --save-images evaluation/final/comparisons
+```
+Our runs: `before` (old pipeline), `sayo` (selective update + median start), `final` (+ Pati's changes), `shadowfix` (shadow removal on colour footage only) and `alphas` (learning-rate test). The `evaluation/` folder is ignored by git.
 
 ## Project structure
 - `app.py`: Streamlit interface (upload, display, download)
@@ -119,7 +123,7 @@ All `results*.csv`, `per_frame*.csv` and `comparisons*/` files are ignored by gi
 - `mark_frames.py`: hand-mark ground-truth masks for a clip
 - `compare_methods.py`: side-by-side images of alternative methods; `--make-test` makes a synthetic clip with exact ground truth
 
-Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked frames), `output/` (from `compare_methods.py`), and evaluation results (`results*.csv`, `per_frame*.csv`, `comparisons*/`).
+Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked frames), `output/` (from `compare_methods.py`), and `evaluation/` (results, per-frame scores and comparison images for each run).
 
 
 ## Status
