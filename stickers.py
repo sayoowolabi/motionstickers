@@ -39,6 +39,10 @@ Week 11 changes (Chloe, from the final evaluation):
     settings (None = automatic).
   - clean_mask() drops shapes smaller than RELATIVE_MIN_SIZE of the biggest
     one, so leftover blobs don't appear as floating pieces in stickers.
+  - drop_ghosts(): shapes that don't change between frames are dropped when
+    another shape is moving (Cucchiara et al., 2003).
+  - Stickers covering more than MAX_OBJECT_FRAC of the frame are skipped
+    (the whole scene changed, e.g. the camera adjusting its exposure).
 
 KNOWN LIMITATIONS:
   - If something stays in the same place for more than half of the clip,
@@ -123,6 +127,22 @@ MIN_OBJECT_PIXELS = 50       # never go below this, even on tiny frames
 # sometimes drop the dog).
 RELATIVE_MIN_SIZE = 0.3
 
+# Ghost check (Cucchiara et al., 2003): a ghost is a patch where the
+# background is out of date, so nothing in it changes from frame to frame;
+# a real object does. Each shape is compared with the frame GHOST_GAP frames
+# earlier: if under GHOST_MIN_MOVING of its pixels changed by more than
+# GHOST_DIFF, it counts as still. Still shapes are dropped only when another
+# shape in the same frame IS moving, so a person standing still is kept.
+GHOST_GAP = 5
+GHOST_DIFF = 15
+GHOST_MIN_MOVING = 0.05
+
+# A "sticker" covering more than this share of the frame is the whole scene
+# changing (the camera adjusting its exposure, lights switching on), not a
+# moving object, so it is skipped. On our clips real objects covered at
+# most 18% of the frame; the bunny clip's first frame covered 67%.
+MAX_OBJECT_FRAC = 0.5
+
 # How many frames, spread across the clip, make the starting background.
 BACKGROUND_SAMPLES = 25
 
@@ -131,8 +151,40 @@ BACKGROUND_SAMPLES = 25
 DUPLICATE_OVERLAP = 0.7
 
 
+def drop_ghosts(cleaned, change):
+    """
+    Remove shapes that aren't moving (ghosts) when another shape is moving.
+
+    cleaned: mask from clean_mask()
+    change:  black/white mask of pixels that changed since GHOST_GAP frames
+             ago (frame differencing), or None to skip the check
+    Returns the mask with ghost shapes removed (or unchanged).
+    """
+    if change is None:
+        return cleaned
+    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) < 2:
+        return cleaned
+
+    moving, still = [], []
+    for c in contours:
+        shape = np.zeros_like(cleaned)
+        cv2.drawContours(shape, [c], -1, 255, thickness=-1)
+        area = cv2.countNonZero(shape)
+        changed = cv2.countNonZero(cv2.bitwise_and(shape, change))
+        (moving if changed >= GHOST_MIN_MOVING * area else still).append(c)
+
+    #Nothing moving (someone standing still) or nothing still: keep it all
+    if not moving or not still:
+        return cleaned
+    kept = np.zeros_like(cleaned)
+    cv2.drawContours(kept, moving, -1, 255, thickness=-1)
+    return kept
+
+
 def make_sticker(frame, motion_mask, return_mask=False,
-                 colour_background=None, shadows=True):
+                 colour_background=None, shadows=True, change=None):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
@@ -186,6 +238,13 @@ def make_sticker(frame, motion_mask, return_mask=False,
     else:
         cleaned = clean_mask(motion_mask)
     if cleaned is None:
+        return nothing
+
+    # Ghost check: drop shapes that aren't moving if something else is
+    cleaned = drop_ghosts(cleaned, change)
+
+    # Too big to be one object: the whole scene changed, so no sticker
+    if cv2.countNonZero(cleaned) > MAX_OBJECT_FRAC * cleaned.size:
         return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
@@ -798,6 +857,7 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
     stickers = []
     last_kept_mask = None  # mask of the last sticker we kept
     index = 0
+    recent = []                # the last GHOST_GAP greyscale frames
 
     while True:
         ok, frame = cap.read()
@@ -815,9 +875,14 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
 
         # Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
+            #Pixels that changed since GHOST_GAP frames ago, for the ghost check
+            change = None
+            if len(recent) == GHOST_GAP:
+                diff = cv2.absdiff(gray, recent[0])
+                _, change = cv2.threshold(diff, GHOST_DIFF, 255, cv2.THRESH_BINARY)
             sticker, mask = make_sticker(frame, motion_mask, return_mask=True,
                                          colour_background=colour_background,
-                                         shadows=shadows)
+                                         shadows=shadows, change=change)
             if sticker is not None:
                 # Skip near-duplicates: compare with the last sticker we KEPT,
                 # not the last one made, so a slow drift still adds up to a
@@ -837,6 +902,9 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
         #with the same selective update, so the two models stay in step
         colour_background = update_background(frame, colour_background,
                                               motion_mask=motion_mask)
+        recent.append(gray)
+        if len(recent) > GHOST_GAP:
+            recent.pop(0)
         index += 1
         if progress_callback:
             progress_callback(min(index / total, 1.0))
