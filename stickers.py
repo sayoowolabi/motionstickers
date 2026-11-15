@@ -85,6 +85,15 @@ SHADOW_LIGHTEST = 0.93  # barely darker (93%+) = just noise
 SHADOW_MAX_SAT_CHANGE = 40   # 0-255 scale
 SHADOW_MAX_HUE_CHANGE = 10   # 0-179 scale (OpenCV hue)
 
+# Smallest shape that counts as a real object (step 3, Pati), as a share of
+# the frame's area instead of a fixed 500 px, so it means the same thing
+# at any resolution: 0.0005 = 0.05% of the frame, which is about 150 px at
+# 640x480, 1,000 px at 1080p and 4,100 px at 4K. A fixed 500 px was too
+# big for small/distant objects on low-res CCTV (the bunny got deleted)
+# and too small to filter noise blobs on 4K footage.
+MIN_OBJECT_FRAC = 0.0005
+MIN_OBJECT_PIXELS = 50       # never go below this, even on tiny frames
+
 # How many frames, spread across the clip, make the starting background.
 BACKGROUND_SAMPLES = 25
 
@@ -118,14 +127,14 @@ def make_sticker(frame, motion_mask, return_mask=False,
       2. Motion mask: compare with a running-average background,
          then threshold.
       3. Clean the mask: remove shadows (HSV test against the colour
-         background), morphological opening/closing, keep the largest
-         contour, fill it in.
+         background), morphological opening/closing, keep every shape
+         above the minimum size, fill them in.
       4. Enhance the object: contrast (CLAHE) and sharpening (unsharp mask).
       5. Cut it out: use the mask as the alpha channel, crop to the
          bounding box, add a white outline by dilating the mask.
     """
 
-    # Steps 1 and 2 (preprocessing and the motion mask) are done once per
+       # Steps 1 and 2 (preprocessing and the motion mask) are done once per
     # frame in extract_stickers(), because the selective background update
     # needs the motion mask on every frame, not just sticker frames.
     if motion_mask is None:
@@ -133,11 +142,12 @@ def make_sticker(frame, motion_mask, return_mask=False,
 
     nothing = (None, None) if return_mask else None
 
-    if cv2.countNonZero(motion_mask) < 500:
-        # If the motion is too small, return None
+    # If the motion is too small, return None. The minimum scales with the
+    # frame size (see min_object_area()) instead of a fixed 500 px
+    if cv2.countNonZero(motion_mask) < min_object_area(motion_mask):
         return nothing
 
-    # Step 3 (Pati): remove shadows, then clean the mask into one solid shape.
+    # Step 3 (Pati): remove shadows, then clean the mask into solid shapes.
     # Shadow removal is skipped at night: dark/infrared frames have almost
     # no colour, so the hue and saturation checks would just be noise.
     if colour_background is not None and not night:
@@ -354,21 +364,10 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None
     Returns:
         The updated background model (float32).
     """
-    #On the first frame there is no background yet, so the frame itself
-    #becomes the starting background. accumulateWeighted needs a float
-    #image to store the decimal values of the average, hence float32
-    if background is None:
-        return gray.astype(np.float32)
-
-    if motion_mask is None:
-        #Blind update: blends the whole frame into the background (in place)
-        cv2.accumulateWeighted(gray, background, alpha)
-        return background
-
-    #The threshold misses the soft, blurred edges of a moving object, so the
+      #The threshold misses the soft, blurred edges of a moving object, so the
     #mask is grown a little to keep those edges out of the background too.
-    #The raw mask is used rather than clean_mask(), which keeps only the
-    #largest shape and would let a second, smaller person fade out
+    #The raw mask is used rather than clean_mask(), which drops small
+    #shapes and shadows, so those pixels would be learned at the full rate
     grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
     moving = cv2.dilate(motion_mask, grow)
 
@@ -442,9 +441,21 @@ def shadow_mask(frame, background):
     return shadow.astype("uint8") * 255
 
 
-def clean_mask(mask, min_area=500, frame=None, background=None):
+def min_object_area(mask, frac=None):
     """
-    Step 3 (Pati): clean the motion mask into one solid shape.
+    Smallest shape (in pixels) that counts as a real object for a frame
+    of this size: MIN_OBJECT_FRAC of the frame's area, but at least
+    MIN_OBJECT_PIXELS. Scales with resolution, like the sticker outlines.
+    """
+    if frac is None:
+        frac = MIN_OBJECT_FRAC
+    h, w = mask.shape[:2]
+    return max(MIN_OBJECT_PIXELS, round(h * w * frac))
+
+
+def clean_mask(mask, min_area=None, frame=None, background=None):
+    """
+    Step 3 (Pati): clean the motion mask into solid shapes.
 
     The raw motion mask has three problems: shadows that move with the
     object, tiny white specks from camera noise, and a hollow, broken
@@ -452,9 +463,15 @@ def clean_mask(mask, min_area=500, frame=None, background=None):
     the edges that moved). This takes the shadows out, removes the specks,
     joins the outline up and fills it in.
 
+    Every shape above the minimum size is kept, not just the largest, so
+    two things moving at once (a person and their dog) both stay in. They
+    end up in the same sticker, since a sticker is cut from the whole mask.
+
     Parameters:
         mask:       black/white motion mask from create_motion_mask()
-        min_area:   smallest shape (in pixels) that counts as a real object
+        min_area:   smallest shape (in pixels) that counts as a real
+                    object. None = scale it with the frame size
+                    (see min_object_area())
         frame:      optional current colour frame, for shadow removal
         background: optional colour background model, for shadow removal
                     (if either is missing, shadows are left in)
@@ -485,14 +502,17 @@ def clean_mask(mask, min_area=500, frame=None, background=None):
     if not contours:
         return None
 
-    #Keeps only the largest region, the moving object
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < min_area:
+    #Keeps every region big enough to be a real object, not just the
+    #largest one, so a second moving thing (the dog) isn't dropped
+    if min_area is None:
+        min_area = min_object_area(mask)
+    objects = [c for c in contours if cv2.contourArea(c) >= min_area]
+    if not objects:
         return None
 
-    #Draws that region filled in (thickness=-1) onto a blank mask
+    #Draws those regions filled in (thickness=-1) onto a blank mask
     filled = np.zeros_like(mask)
-    cv2.drawContours(filled, [largest], -1, 255, thickness=-1)
+    cv2.drawContours(filled, objects, -1, 255, thickness=-1)
     return filled
 
 def enhance_object(frame):
