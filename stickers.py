@@ -6,7 +6,38 @@ video into sticker cutouts lives here, so this file can be developed, tested
 and submitted independently of the interface.
 
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
+Step 2 now uses a running-average background instead of comparing
+with the previous frame, to reduce ghosting.
+The sticker outline and padding (step 5) scale with the object's size.
+Near-duplicate stickers (an object standing still) are skipped.
+
+Week 10 changes (Sayo, steps 1-2):
+  - Selective background update: the background only learns at full speed
+    where nothing is moving, so people who stand still no longer fade out
+    and don't leave a trail when they move on.
+  - The starting background is the median of frames spread across the whole
+    clip, not the first frame, so someone already in frame 1 is no longer
+    baked into the background as a ghost.
+  - CLAHE (night contrast) is switched on or off once per clip instead of
+    per frame, so clips that hover around the brightness limit don't flicker.
+
+Week 10 changes (Pati, steps 1 and 3):
+  - Night clips get gamma correction before CLAHE (NIGHT_GAMMA), so the
+    dark areas have detail for CLAHE to work with. Uses Sayo's clip-wide
+    night decision, so it doesn't flicker either.
+  - Shadow removal: an HSV test (Cucchiara et al., 2003) against a colour
+    copy of the background removes pixels that only got darker without
+    changing colour. Skipped on night clips.
+
+KNOWN LIMITATIONS:
+  - If something stays in the same place for more than half of the clip,
+    the median treats it as background. If it then leaves, the empty spot
+    shows up as motion until the slow update absorbs it.
+  - A permanent change (door left open, light switched on) takes about
+    1 / (BACKGROUND_ALPHA * MOVING_ALPHA_FACTOR) frames to be absorbed,
+    because it counts as "moving" and is learned at the slow rate.
 """
+
 
 import io
 
@@ -14,83 +45,124 @@ import cv2
 import numpy as np
 
 
-# --- Settings to tune on our footage -------------------------------------
-# Night handling (step 1)
-NIGHT_BRIGHTNESS = 70   # average brightness (0-255) below this = night frame
-NIGHT_GAMMA = 0.6       # gamma < 1 brightens dark areas more than light ones
+# Learning rate for the running-average background (step 2).
+# The background "remembers" roughly the last 1 / alpha frames:
+#   small alpha -> slow to adapt (stable, but lighting changes and objects
+#                  that stop moving take longer to fade into the background)
+#   large alpha -> fast to adapt (but a slow-moving object starts to blend
+#                  into the background, leaving a hollow or trailing mask)
+# 0.01 was chosen from the alpha sweep in evaluate.py on the synthetic test
+# clip: 0.005 and 0.01 scored the same (mean IoU ~0.83), while 0.02 and
+# above let the moving object blend into the background and leave a trail
+# behind it (mean IoU 0.56-0.64). 0.01 adapts twice as fast as 0.005
+# (~100 frames, about 4 s at 25 fps), so it was preferred.
+# Re-check this on real footage once it has been hand-marked.
+BACKGROUND_ALPHA = 0.01
 
-# Shadow removal (step 3), HSV test
-# A pixel counts as shadow if it got darker by a "shadow-like" amount
-# (between SHADOW_DARKEST and SHADOW_LIGHTEST of its old brightness)
-# while keeping roughly the same colour (hue and saturation).
-SHADOW_DARKEST = 0.4    # darker than 40% of before = a real object, not shadow
+# Selective update: pixels marked as moving are still blended in, but this
+# many times slower (0.1 x 0.01 = 0.001, roughly the last 1000 frames).
+# The selective update in Piccardi (2004, Section 2.1, eq. 3, from Koller
+# et al., 1994) doesn't update moving pixels at all. We use a slow rate
+# instead because, with no update, anything moved and left there (a door
+# left open, a light switched on, someone in frame 1 who walks away) would
+# be flagged as motion forever: a permanent ghost (Cucchiara et al., 2003).
+MOVING_ALPHA_FACTOR = 0.1
+
+# Frames below this mean brightness count as night footage and get gamma
+# correction + CLAHE (decided once per clip, see estimate_background()).
+NIGHT_BRIGHTNESS = 70
+
+# Night handling (step 1, Pati): gamma < 1 brightens dark areas more than
+# light ones, so CLAHE has some detail to work with.
+NIGHT_GAMMA = 0.6
+
+# Shadow removal (step 3, Pati), HSV test against the colour background.
+# A pixel counts as shadow if it is darker than the background by a
+# "shadow-like" amount (between SHADOW_DARKEST and SHADOW_LIGHTEST of the
+# background's brightness) while keeping roughly the same colour.
+SHADOW_DARKEST = 0.4    # darker than 40% of the background = a real object
 SHADOW_LIGHTEST = 0.93  # barely darker (93%+) = just noise
 SHADOW_MAX_SAT_CHANGE = 40   # 0-255 scale
 SHADOW_MAX_HUE_CHANGE = 10   # 0-179 scale (OpenCV hue)
 
+# How many frames, spread across the clip, make the starting background.
+BACKGROUND_SAMPLES = 25
 
-def make_sticker(frame, prev_gray, prev_frame=None, night=None):
+# Sticker de-duplication: skip a new sticker when it overlaps the last
+# kept sticker by more than this (IoU).
+DUPLICATE_OVERLAP = 0.7
+
+
+def make_sticker(frame, motion_mask, return_mask=False,
+                 colour_background=None, night=False):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
 
-    prev_frame: the previous colour frame, used to remove shadows (step 3)
-    night:      True/False to force night mode, None to check this frame
+    With return_mask=True it returns (sticker, cleaned_mask) instead, or
+    (None, None), so extract_stickers() can compare masks between stickers.
 
-    TODO - our pipeline, built up from the research:
-      1. Preprocess: greyscale, blur, night-frame check,
-         CLAHE on night frames.
-      2. Motion mask: compare with the previous frame or a
-         running-average background, then threshold.
-      3. Clean the mask: morphological opening/closing,
-         keep the largest contour, fill it in.
+    Parameters:
+        frame:             the original colour frame (BGR)
+        motion_mask:       the frame's motion mask from
+                           background_motion_mask(), or None if there is
+                           no background yet
+        colour_background: the colour (BGR) background model, used to
+                           remove shadows (step 3). None = no shadow removal
+        night:             True for night clips. Shadow removal is skipped
+                           then, because dark frames have almost no colour
+
+    Our pipeline, built up from the research:
+      1. Preprocess: greyscale, blur, night-clip check,
+         gamma correction + CLAHE on night clips.
+      2. Motion mask: compare with a running-average background,
+         then threshold.
+      3. Clean the mask: remove shadows (HSV test against the colour
+         background), morphological opening/closing, keep the largest
+         contour, fill it in.
       4. Enhance the object: contrast (CLAHE) and sharpening (unsharp mask).
       5. Cut it out: use the mask as the alpha channel, crop to the
          bounding box, add a white outline by dilating the mask.
     """
 
-    if night is None:
-        night = is_night(frame)
+    # Steps 1 and 2 (preprocessing and the motion mask) are done once per
+    # frame in extract_stickers(), because the selective background update
+    # needs the motion mask on every frame, not just sticker frames.
+    if motion_mask is None:
+        return (None, None) if return_mask else None
 
-    gray = preprocess_frame(frame, night)
-
-    if prev_gray is None:
-        return None
-
-    motion_mask = create_motion_mask(gray, prev_gray)
+    nothing = (None, None) if return_mask else None
 
     if cv2.countNonZero(motion_mask) < 500:
         # If the motion is too small, return None
-        return None
+        return nothing
 
     # Step 3 (Pati): remove shadows, then clean the mask into one solid shape.
     # Shadow removal is skipped at night: dark/infrared frames have almost
     # no colour, so the hue and saturation checks would just be noise.
-    if prev_frame is not None and not night:
-        cleaned = clean_mask(motion_mask, frame=frame, prev_frame=prev_frame)
+    if colour_background is not None and not night:
+        cleaned = clean_mask(motion_mask, frame=frame,
+                             background=colour_background)
     else:
         cleaned = clean_mask(motion_mask)
     if cleaned is None:
-        return None
+        return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
     enhanced = enhance_object(frame)
 
     # Step 5 (Chloe): cut the object out as a transparent sticker
-    return cut_out_sticker(enhanced, cleaned)
+    sticker = cut_out_sticker(enhanced, cleaned)
+    return (sticker, cleaned) if return_mask else sticker
 
 
 def brightness(frame):
-    """Average brightness of a frame (0-255), from the V channel of HSV."""
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    return float(np.mean(hsv[:, :, 2]))
-
-
-def is_night(frame, threshold=None):
-    """True if the frame is dark enough to count as night footage."""
-    if threshold is None:
-        threshold = NIGHT_BRIGHTNESS
-    return brightness(frame) < threshold
+    """
+    Average brightness of a colour frame (0-255), measured on the
+    greyscale image, the same way the night check in the pipeline does it,
+    so tune_night.py prints numbers you can compare with NIGHT_BRIGHTNESS.
+    """
+    return float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
 
 
 def gamma_correct(gray, gamma=None):
@@ -108,20 +180,21 @@ def gamma_correct(gray, gamma=None):
     return cv2.LUT(gray, table)
 
 
-def preprocess_frame(frame, night=None):
+def preprocess_frame(frame, use_clahe=None):
     """
     Preprocess a video frame before motion detection.
 
     Converts the frame to greyscale and applies Gaussian blur to reduce
-    noise. The average brightness is then checked to determine whether
-    the frame is dark. If it is a night frame, gamma correction brightens
-    it and CLAHE improves the contrast, so objects are easier to
-    distinguish from the background.
+    noise. If it is night footage, gamma correction brightens the dark
+    areas and CLAHE improves the contrast (see night_contrast()), so
+    objects are easier to distinguish from the background.
 
     Parameters:
-        frame: The original colour video frame.
-        night: True/False to force night mode (so a whole clip is treated
-               the same way), or None to check this frame on its own.
+        frame:     The original colour video frame.
+        use_clahe: True/False = the night decision already made for the
+                   whole clip (see estimate_background()). None = decide
+                   from this frame's own brightness (the old per-frame
+                   rule, which can flicker on clips near NIGHT_BRIGHTNESS).
 
     Returns:
         The preprocessed greyscale frame.
@@ -132,29 +205,118 @@ def preprocess_frame(frame, night=None):
     #Applies a small Gaussian blur to remove tiny pixel-level changes
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    #Checks the average brightness of the frame
-    if night is None:
-        night = is_night(frame)
+    #No clip-wide decision given, so check this frame's average brightness
+    if use_clahe is None:
+        use_clahe = np.mean(gray) < NIGHT_BRIGHTNESS
 
-    if night:
-        #brightens the dark areas first, so CLAHE has detail to work with
-        gray = gamma_correct(gray)
-        #increases the contrast of dark footage to better distinguish between objects
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray = clahe.apply(gray)
+    if use_clahe:
+        #brightens dark footage, then increases the contrast to better
+        #distinguish between objects
+        gray = night_contrast(gray)
 
     return gray
 
+
+def night_contrast(gray):
+    """
+    Night enhancement on a greyscale frame: gamma correction first, so the
+    dark areas have some detail, then CLAHE to boost the local contrast.
+    Used by both preprocess_frame() and estimate_background(), so the
+    frames and the background are always enhanced the same way.
+    """
+    gray = gamma_correct(gray)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    return clahe.apply(gray)
+
+
+def estimate_background(video_path, samples=BACKGROUND_SAMPLES,
+                        return_colour=False):
+    """
+    Build the starting background before the main pass over the video.
+
+    Reads `samples` frames spread evenly across the whole clip and takes
+    the median of each pixel. Someone walking through the scene only
+    covers a given pixel in a few of those frames, so the median picks the
+    empty scene, even if they are already there in frame 1. This replaces
+    starting from the first frame, which baked anyone in it into the
+    background as a ghost (Cucchiara et al., 2003). Unlike a warm-up
+    period, no frames are skipped, so motion at the very start of a short
+    clip still makes stickers. Median background: Piccardi (2004), Section
+    2.2 (temporal median filter, which works even on sub-sampled frames);
+    taking the median of ~25 frames spread over the clip: LearnOpenCV (2019).
+    It only works if each pixel shows the empty scene in at least half of
+    the samples.
+
+    The same frames are used to decide once, for the whole clip, whether
+    it is night footage, so CLAHE doesn't switch on and off between frames
+    whose brightness hovers around NIGHT_BRIGHTNESS.
+
+    With return_colour=True it also builds a colour (BGR) version of the
+    background from the same frames, for shadow removal (step 3), and
+    returns three values instead of two. Off by default so existing
+    callers (e.g. the evaluation scripts) keep working unchanged.
+
+    Returns:
+        (background as float32, use_clahe), or (None, None) if no frames
+        could be read. Then extract_stickers() falls back to the old
+        behaviour (first frame as background, CLAHE decided per frame).
+        With return_colour=True: (background, use_clahe, colour_background).
+    """
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    #Evenly spaced frame numbers from the first to the last frame
+    wanted = set(np.linspace(0, max(total - 1, 0), samples).astype(int).tolist())
+
+    #Reads through the clip in order instead of jumping to each frame
+    #(cap.set): on the 4K test clip jumping took 23-44 s, reading in order
+    #21 s, and it doesn't depend on jumping landing on the exact frame.
+    #grab() moves to the next frame; retrieve() is only called on the ones
+    #we keep, which skips converting all the others
+    grays = []
+    colours = []
+    index = 0
+    while cap.grab():
+        if index in wanted:
+            ok, frame = cap.retrieve()
+            if ok:
+                #CLAHE is decided below, once all the samples are in
+                grays.append(preprocess_frame(frame, use_clahe=False))
+                if return_colour:
+                    colours.append(frame)
+        index += 1
+    cap.release()
+
+    if not grays:
+        return (None, None, None) if return_colour else (None, None)
+
+    #Night clip if the typical (median) sample is dark
+    use_clahe = bool(np.median([np.mean(g) for g in grays]) < NIGHT_BRIGHTNESS)
+    if use_clahe:
+        grays = [night_contrast(g) for g in grays]
+
+    #Median of each pixel across the samples (axis 0 = the sample number)
+    background = np.median(np.stack(grays), axis=0).astype(np.float32)
+    if not return_colour:
+        return background, use_clahe
+
+    #Same median, per colour channel, for the shadow test
+    colour_background = np.median(np.stack(colours), axis=0).astype(np.float32)
+    return background, use_clahe, colour_background
+
 def create_motion_mask(current_gray, prev_gray):
     """
-    Create a binary mask showing areas that changed between two frames.
+    Create a binary mask showing areas that differ between two greyscale
+    images.
 
-    The current frame is compared with the previous frame using absolute
-    difference. Pixels with a large enough change are turned white (255),
-    while unchanged pixels remain black (0).
+    The current frame is compared with a reference image using absolute
+    difference. The reference can be the previous frame (frame differencing)
+    or the running-average background (see background_motion_mask). Pixels
+    with a large enough change are turned white (255), while unchanged
+    pixels remain black (0).
     """
 
-    #Calculates the absolute difference between the current and previous frames
+    #Calculates the absolute difference between the current frame and the reference
     frame_difference = cv2.absdiff(prev_gray, current_gray)
 
     #Applies a binary threshold to the frame difference to create a mask of moving areas
@@ -163,8 +325,75 @@ def create_motion_mask(current_gray, prev_gray):
     return motion_mask
 
 
+def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None):
+    """
+    Update the running-average background model with a new frame.
 
-def shadow_mask(frame, prev_frame):
+    New background = (1 - alpha) * old background + alpha * current frame
+
+    This should be called on EVERY frame (not just the frames we make
+    stickers from) so the background stays an accurate picture of the scene.
+
+    Selective update: if the frame's motion mask is given, only the pixels
+    where nothing is moving are updated at the normal rate. Moving pixels
+    are updated MOVING_ALPHA_FACTOR times slower. Without this, a person
+    who stands still is slowly blended into the background, so they fade
+    out of the mask, and when they walk off, the copy of them left in the
+    background shows up as a trail. Selective update: Koller et al. (1994),
+    as described in Piccardi (2004), Section 2.1.
+
+    Parameters:
+        gray:        the current frame after preprocess_frame()
+        background:  the current background model (float32), or None on
+                     the first frame
+        alpha:       learning rate, how quickly the background adapts
+        motion_mask: the raw mask from background_motion_mask() for this
+                     frame, or None to update every pixel the same (the
+                     old "blind" update)
+
+    Returns:
+        The updated background model (float32).
+    """
+    #On the first frame there is no background yet, so the frame itself
+    #becomes the starting background. accumulateWeighted needs a float
+    #image to store the decimal values of the average, hence float32
+    if background is None:
+        return gray.astype(np.float32)
+
+    if motion_mask is None:
+        #Blind update: blends the whole frame into the background (in place)
+        cv2.accumulateWeighted(gray, background, alpha)
+        return background
+
+    #The threshold misses the soft, blurred edges of a moving object, so the
+    #mask is grown a little to keep those edges out of the background too.
+    #The raw mask is used rather than clean_mask(), which keeps only the
+    #largest shape and would let a second, smaller person fade out
+    grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    moving = cv2.dilate(motion_mask, grow)
+
+    #accumulateWeighted only changes the pixels where the mask is non-zero,
+    #so it is run twice: full rate on still pixels, slow rate on moving ones
+    cv2.accumulateWeighted(gray, background, alpha, mask=cv2.bitwise_not(moving))
+    cv2.accumulateWeighted(gray, background, alpha * MOVING_ALPHA_FACTOR, mask=moving)
+    return background
+
+
+def background_motion_mask(gray, background):
+    """
+    Create a motion mask by comparing a frame with the background model.
+
+    The background is stored as float32, so it is converted back to a
+    normal 8-bit image first, then the existing create_motion_mask() does
+    the difference and threshold.
+    """
+    #Converts the float background back to 0-255 whole numbers
+    background_8bit = cv2.convertScaleAbs(background)
+    return create_motion_mask(gray, background_8bit)
+
+
+
+def shadow_mask(frame, background):
     """
     Step 3 (Pati): find pixels that changed only because of a shadow.
 
@@ -174,19 +403,26 @@ def shadow_mask(frame, prev_frame):
     saturation (S) stay about the same. A real object covering the
     surface usually changes the colour as well.
 
-    It checks both ways round, because with frame differencing a shadow
-    shows up where it arrives (now darker) and where it left (now lighter).
+    The frame is compared with the colour background model (what the
+    surface looks like with nothing on it), as in Cucchiara et al. With a
+    background there is only one direction to check: a shadow makes the
+    frame darker than the background. (The earlier version compared with
+    the previous frame, which only caught the edges of a shadow, so it
+    had to check both darker and lighter.)
 
     Parameters:
         frame:      the current colour frame (BGR)
-        prev_frame: the colour frame it is being compared with (BGR)
+        background: the colour background model (BGR, uint8 or float32)
 
     Returns:
         A black/white mask, 255 where the change looks like a shadow.
     """
+    #The background model is float32, so it is turned back into 0-255
+    background = cv2.convertScaleAbs(background)
+
     #A light blur so single noisy pixels don't decide the result
     cur = cv2.cvtColor(cv2.GaussianBlur(frame, (5, 5), 0), cv2.COLOR_BGR2HSV)
-    old = cv2.cvtColor(cv2.GaussianBlur(prev_frame, (5, 5), 0), cv2.COLOR_BGR2HSV)
+    old = cv2.cvtColor(cv2.GaussianBlur(background, (5, 5), 0), cv2.COLOR_BGR2HSV)
     cur = cur.astype("float32")
     old = old.astype("float32")
 
@@ -197,17 +433,16 @@ def shadow_mask(frame, prev_frame):
     same_sat = np.abs(cur[:, :, 1] - old[:, :, 1]) <= SHADOW_MAX_SAT_CHANGE
     same_colour = same_hue & same_sat
 
-    def darkened(dark, light):
-        #Brightness ratio, +1 so we never divide by zero
-        ratio = (dark[:, :, 2] + 1) / (light[:, :, 2] + 1)
-        return (ratio >= SHADOW_DARKEST) & (ratio <= SHADOW_LIGHTEST)
+    #Brightness ratio frame / background, +1 so we never divide by zero.
+    #A shadow is darker than the background, but not too much darker
+    ratio = (cur[:, :, 2] + 1) / (old[:, :, 2] + 1)
+    darkened = (ratio >= SHADOW_DARKEST) & (ratio <= SHADOW_LIGHTEST)
 
-    #Shadow arrived (current darker) or shadow left (previous darker)
-    shadow = same_colour & (darkened(cur, old) | darkened(old, cur))
+    shadow = same_colour & darkened
     return shadow.astype("uint8") * 255
 
 
-def clean_mask(mask, min_area=500, frame=None, prev_frame=None):
+def clean_mask(mask, min_area=500, frame=None, background=None):
     """
     Step 3 (Pati): clean the motion mask into one solid shape.
 
@@ -221,7 +456,7 @@ def clean_mask(mask, min_area=500, frame=None, prev_frame=None):
         mask:       black/white motion mask from create_motion_mask()
         min_area:   smallest shape (in pixels) that counts as a real object
         frame:      optional current colour frame, for shadow removal
-        prev_frame: optional previous colour frame, for shadow removal
+        background: optional colour background model, for shadow removal
                     (if either is missing, shadows are left in)
 
     Returns:
@@ -230,8 +465,8 @@ def clean_mask(mask, min_area=500, frame=None, prev_frame=None):
     """
     #Removes shadow pixels from the mask before any morphology, so the
     #closing step can't join a shadow onto the object
-    if frame is not None and prev_frame is not None:
-        shadows = shadow_mask(frame, prev_frame)
+    if frame is not None and background is not None:
+        shadows = shadow_mask(frame, background)
         mask = cv2.bitwise_and(mask, cv2.bitwise_not(shadows))
 
     #Opening = erode then dilate. A small kernel deletes specks of noise
@@ -292,7 +527,36 @@ def enhance_object(frame):
 
     return sharpened
 
-def cut_out_sticker(frame, mask, outline=6, padding=10):
+def outline_size(mask, outline_frac=0.04, padding_frac=0.03,
+                 min_outline=2, min_padding=2):
+    """
+    Work out the outline and padding (in pixels) for one sticker, scaled to
+    the size of the object rather than fixed.
+
+    A fixed 6-pixel outline looks thick on a small, low-resolution object
+    but almost disappears on a 4K one, because the app shrinks big stickers
+    to fit its sticker sheet (columns about 200 px wide). Scaling both with
+    the object's longest side keeps stickers looking the same whatever the
+    video resolution.
+
+    Parameters:
+        mask:         single-channel mask, 255 = object, 0 = background
+        outline_frac: outline thickness as a share of the object's longest
+                      side (0.04 = 4%)
+        padding_frac: extra empty space around the outline, same idea
+        min_outline, min_padding: smallest values in pixels, so tiny
+                      objects still get a visible border
+
+    Returns:
+        (outline, padding) as whole numbers of pixels.
+    """
+    _, _, w, h = cv2.boundingRect(mask)
+    longest = max(w, h)
+    outline = max(min_outline, round(longest * outline_frac))
+    padding = max(min_padding, round(longest * padding_frac))
+    return outline, padding
+
+def cut_out_sticker(frame, mask, outline=None, padding=None):
     """
     Step 5 (Chloe): turn a frame + a clean mask into a sticker.
 
@@ -306,12 +570,22 @@ def cut_out_sticker(frame, mask, outline=6, padding=10):
     Parameters:
         frame:   original colour frame (BGR)
         mask:    single-channel mask, 255 = object, 0 = background
-        outline: thickness of the white border in pixels
-        padding: empty space kept around the object when cropping
-
+        outline: thickness of the white border in pixels. Left as None,
+                 it is scaled to the object's size (see outline_size)
+        padding: empty space kept around the object when cropping. Left
+                 as None, it is scaled the same way
     Returns:
         A BGRA image (4 channels) ready to save as a transparent PNG.
     """
+
+    # --- 0. Outline and padding sizes -------------------------------------
+    # Scaled to the object unless fixed values were passed in
+    auto_outline, auto_padding = outline_size(mask)
+    if outline is None:
+        outline = auto_outline
+    if padding is None:
+        padding = auto_padding
+
     # --- 1. Transparency --------------------------------------------------
     # Split the frame into its blue, green and red channels, then merge
     # them back with the mask added as a fourth (alpha) channel.
@@ -389,48 +663,94 @@ def make_gif(stickers, frame_ms=400):
     )
     return buffer.getvalue()
 
+def mask_overlap(mask_a, mask_b):
+    """
+    How much two masks overlap, as intersection over union (IoU):
+    the area both cover, divided by the area either covers.
+    1 = the same shape in the same place, 0 = no overlap at all.
 
-def extract_stickers(video_path, every_n_frames=15, progress_callback=None):
+    Used to spot near-duplicate stickers: if an object hasn't moved, its
+    mask barely changes from one sticker to the next.
+    """
+    inter = cv2.countNonZero(cv2.bitwise_and(mask_a, mask_b))
+    union = cv2.countNonZero(cv2.bitwise_or(mask_a, mask_b))
+    if union == 0:
+        return 0.0
+    return inter / union
+
+
+def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
+                     duplicate_overlap=DUPLICATE_OVERLAP):
     """
     Read a video and return a chronological list of (time_in_seconds, sticker).
 
-    every_n_frames: only process every Nth frame, so the output isn't
-                    hundreds of near-identical stickers.
+    every_n_frames: only try to make a sticker from every Nth frame, so the
+                    output isn't hundreds of near-identical stickers. This
+                    does NOT affect motion detection: the background is
+                    updated on every frame regardless.
     progress_callback: optional function(fraction) used by the interface
                        to update a progress bar.
+    duplicate_overlap: skip a new sticker if its mask overlaps the last
+                       KEPT sticker's mask by more than this (IoU, 0 to 1),
+                       so an object standing still doesn't give dozens of
+                       near-identical stickers. 1.0 keeps every sticker.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError("Could not open the video file.")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25          # fall back if unknown
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25  # fall back if unknown
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
+    #Starting background (median of frames across the clip) and the
+    #clip-wide night/CLAHE decision. If this fails, background is None and
+    #the first frame becomes the background, as before
+    background, use_clahe, colour_background = estimate_background(
+        video_path, return_colour=True)
+    night = bool(use_clahe)
+
     stickers = []
-    prev_gray = None
-    prev_frame = None
-    night = None
+    last_kept_mask = None  # mask of the last sticker we kept
     index = 0
 
     while True:
         ok, frame = cap.read()
         if not ok:
-            break                                   # end of video
+            break  # end of video
 
+        #Preprocess every frame once, since the background needs every frame
+        gray = preprocess_frame(frame, use_clahe)
+
+        #Step 2: the motion mask is needed on every frame now, because the
+        #selective update uses it to decide which pixels to learn
+        motion_mask = None
+        if background is not None:
+            motion_mask = background_motion_mask(gray, background)
+
+        # Generate stickers only at the interval chosen with the slider
         if index % every_n_frames == 0:
-            #Decides day/night once, from the first frame, and keeps it for
-            #the whole clip. Deciding per frame could flip a frame near the
-            #threshold, and then the whole image would count as "motion"
-            if night is None:
-                night = is_night(frame)
-
-            sticker = make_sticker(frame, prev_gray, prev_frame, night)
+            sticker, mask = make_sticker(frame, motion_mask, return_mask=True,
+                                         colour_background=colour_background,
+                                         night=night)
             if sticker is not None:
-                stickers.append((index / fps, sticker))
+                # Skip near-duplicates: compare with the last sticker we KEPT,
+                # not the last one made, so a slow drift still adds up to a
+                # new sticker eventually
+                duplicate = (last_kept_mask is not None and
+                             mask_overlap(mask, last_kept_mask) > duplicate_overlap)
+                if not duplicate:
+                    stickers.append((index / fps, sticker))
+                    last_kept_mask = mask
 
-            #compare preprocessed previous frame VS preprocessed current frame
-            prev_gray = preprocess_frame(frame, night)
-            prev_frame = frame
+        #Update the background on EVERY frame. This happens after the
+        #sticker check so the current frame (and the object in it) isn't
+        #blended into the background it is being compared against
+        background = update_background(gray, background, motion_mask=motion_mask)
+
+        #The colour background (for shadow removal) learns the same way,
+        #with the same selective update, so the two models stay in step
+        colour_background = update_background(frame, colour_background,
+                                              motion_mask=motion_mask)
         index += 1
         if progress_callback:
             progress_callback(min(index / total, 1.0))

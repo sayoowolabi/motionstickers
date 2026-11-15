@@ -8,5 +8,6 @@ __pycache__/
 *.avi
 clips/
 ground_truth/
-comparisons/
-results.csv
+comparisons*/
+results*.csv
+per_frame*.csv

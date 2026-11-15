@@ -5,6 +5,7 @@ the blog's comparison section. Not part of the app.
 Run it from the project folder (next to stickers.py):
 
     python compare_methods.py --make-test            # make a controlled test video
+                                                     # (+ ground truth for evaluate.py)
     python compare_methods.py footage/test.mp4       # compare methods on a video
     python compare_methods.py footage/day_cat_01.mp4 --frame 120
 
@@ -26,7 +27,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from stickers import preprocess_frame, create_motion_mask, clean_mask
+from stickers import (preprocess_frame, create_motion_mask, clean_mask,
+                      update_background, background_motion_mask)
 
 OUT = Path("output/compare")
 
@@ -84,12 +86,13 @@ def mask_frame_difference(frames, i, gap):
 
 
 def mask_running_average(frames, i, alpha=0.05):
-    """Compare with a slowly-updated average of all earlier frames."""
-    avg = preprocess_frame(frames[0]).astype("float32")
-    for f in frames[1:i]:
-        cv2.accumulateWeighted(preprocess_frame(f), avg, alpha)
-    background = cv2.convertScaleAbs(avg)
-    return create_motion_mask(preprocess_frame(frames[i]), background)
+    """Compare with a slowly-updated average of all earlier frames.
+    Uses the same update_background() / background_motion_mask() as the
+    app (stickers.py), so the blog images match what the app does."""
+    background = None
+    for f in frames[:i]:
+        background = update_background(preprocess_frame(f), background, alpha)
+    return background_motion_mask(preprocess_frame(frames[i]), background)
 
 
 # ------------------------------------------- 2. mask cleanup alternatives --
@@ -161,12 +164,31 @@ def outline_draw_contours(frame, mask, width=6):
 
 
 # ------------------------------------------------------- controlled test --
-def make_test_video(path, frames=120, size=(480, 360)):
+def draw_cat(img, i, colour):
+    """Draw the test 'cat' for frame i onto img. Used both for the video
+    and for its ground-truth masks, so the two always match exactly."""
+    x = -120 + i * 5                                                    # starts off-screen
+    cv2.ellipse(img, (x, 230), (55, 28), 0, 0, 360, colour, -1)         # body
+    cv2.circle(img, (x + 58, 198), 22, colour, -1)                      # head
+    for ex in (x + 46, x + 66):                                         # ears
+        cv2.fillConvexPoly(img, np.array([[ex - 8, 185], [ex + 8, 185], [ex, 168]]), colour)
+    step = 6 if (i // 4) % 2 else -6                                    # walking legs
+    for lx, s in ((x - 35, step), (x - 15, -step), (x + 15, step), (x + 35, -step)):
+        cv2.line(img, (lx, 245), (lx + s, 272), colour, 9)
+    cv2.ellipse(img, (x - 65, 205), (25, 10), -40, 0, 360, colour, -1)  # tail
+
+
+def make_test_video(path, frames=120, size=(480, 360), gt_root="ground_truth",
+                    gt_every=5, gt_start=10):
     """
     A 'cat' (body, head, ears, legs, tail) walks in from off-screen across
     a textured room. Because we drew it, we know exactly what the correct
     sticker should look like. The legs and tail make the shape non-convex,
     which shows the difference between contour and convex hull filling.
+
+    It also saves the exact ground-truth mask for every `gt_every`th frame
+    into ground_truth/<video name>/, in the same format as mark_frames.py,
+    so evaluate.py can score methods on it without hand-marking.
     """
     W, H = size
     rng = np.random.default_rng(0)
@@ -174,20 +196,24 @@ def make_test_video(path, frames=120, size=(480, 360)):
     cv2.rectangle(room, (0, 270), (W, H), (150, 170, 190), -1)          # floor
     out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 25, size)
     colour = (40, 60, 100)
+
+    #Folder for the ground-truth masks, named after the video like mark_frames.py
+    gt_dir = Path(gt_root) / Path(path).stem
+    gt_dir.mkdir(parents=True, exist_ok=True)
+
     for i in range(frames):
         f = room.copy()
-        x = -120 + i * 5                                                # starts off-screen
-        cv2.ellipse(f, (x, 230), (55, 28), 0, 0, 360, colour, -1)       # body
-        cv2.circle(f, (x + 58, 198), 22, colour, -1)                    # head
-        for ex in (x + 46, x + 66):                                     # ears
-            cv2.fillConvexPoly(f, np.array([[ex - 8, 185], [ex + 8, 185], [ex, 168]]), colour)
-        step = 6 if (i // 4) % 2 else -6                                # walking legs
-        for lx, s in ((x - 35, step), (x - 15, -step), (x + 15, step), (x + 35, -step)):
-            cv2.line(f, (lx, 245), (lx + s, 272), colour, 9)
-        cv2.ellipse(f, (x - 65, 205), (25, 10), -40, 0, 360, colour, -1)  # tail
+        draw_cat(f, i, colour)
         out.write(f)
+
+        #Draw the same cat in white on black = the perfect mask for this frame
+        if i >= gt_start and i % gt_every == 0:
+            mask = np.zeros((H, W), np.uint8)
+            draw_cat(mask, i, 255)
+            cv2.imwrite(str(gt_dir / f"frame_{i:05d}.png"), f)
+            cv2.imwrite(str(gt_dir / f"frame_{i:05d}_mask.png"), mask)
     out.release()
-    print(f"Test video saved to {path}")
+    print(f"Test video saved to {path}, ground truth saved to {gt_dir}")
 
 
 # ------------------------------------------------------------------- main --
