@@ -48,7 +48,7 @@ import numpy as np
 
 from stickers import (BACKGROUND_ALPHA, NIGHT_BRIGHTNESS, background_motion_mask,
                       clean_mask, create_motion_mask, estimate_background,
-                      has_colour, drop_ghosts, GHOST_GAP, GHOST_DIFF,
+                      has_colour, drop_ghosts, GHOST_GAP, GHOST_DIFF, MAX_OBJECT_FRAC,
                       preprocess_frame, update_background)
 
 
@@ -124,6 +124,9 @@ class AppPipeline(RunningAverage):
             _, change = cv2.threshold(cv2.absdiff(gray, self.recent[0]),
                                       GHOST_DIFF, 255, cv2.THRESH_BINARY)
             cleaned = drop_ghosts(cleaned, change)
+        #Whole-scene changes don't count as an object, as in make_sticker()
+        if cleaned is not None and cv2.countNonZero(cleaned) > MAX_OBJECT_FRAC * cleaned.size:
+            cleaned = None
         self.recent.append(gray)
         if len(self.recent) > GHOST_GAP:
             self.recent.pop(0)

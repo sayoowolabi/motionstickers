@@ -39,6 +39,10 @@ Week 11 changes (Chloe, from the final evaluation):
     settings (None = automatic).
   - clean_mask() drops shapes smaller than RELATIVE_MIN_SIZE of the biggest
     one, so leftover blobs don't appear as floating pieces in stickers.
+  - drop_ghosts(): shapes that don't change between frames are dropped when
+    another shape is moving (Cucchiara et al., 2003).
+  - Stickers covering more than MAX_OBJECT_FRAC of the frame are skipped
+    (the whole scene changed, e.g. the camera adjusting its exposure).
 
 KNOWN LIMITATIONS:
   - If something stays in the same place for more than half of the clip,
@@ -132,6 +136,12 @@ RELATIVE_MIN_SIZE = 0.3
 GHOST_GAP = 5
 GHOST_DIFF = 15
 GHOST_MIN_MOVING = 0.05
+
+# A "sticker" covering more than this share of the frame is the whole scene
+# changing (the camera adjusting its exposure, lights switching on), not a
+# moving object, so it is skipped. On our clips real objects covered at
+# most 18% of the frame; the bunny clip's first frame covered 67%.
+MAX_OBJECT_FRAC = 0.5
 
 # How many frames, spread across the clip, make the starting background.
 BACKGROUND_SAMPLES = 25
@@ -232,6 +242,10 @@ def make_sticker(frame, motion_mask, return_mask=False,
 
     # Ghost check: drop shapes that aren't moving if something else is
     cleaned = drop_ghosts(cleaned, change)
+
+    # Too big to be one object: the whole scene changed, so no sticker
+    if cv2.countNonZero(cleaned) > MAX_OBJECT_FRAC * cleaned.size:
+        return nothing
 
     # Step 4 (Pati): make the object clearer before cutting it out
     enhanced = enhance_object(frame)
