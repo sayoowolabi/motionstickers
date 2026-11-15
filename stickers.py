@@ -29,6 +29,15 @@ Week 10 changes (Pati, steps 1 and 3):
     copy of the background removes pixels that only got darker without
     changing colour. Skipped on night clips.
 
+Week 11 changes (Chloe, from the final evaluation):
+  - Shadow removal runs on footage that has colour, instead of on footage
+    that isn't dark (has_colour()). Infrared clips are often bright enough
+    not to count as night but have no colour, so the HSV test was cutting
+    pieces out of people there.
+  - SHADOW_DARKEST 0.4 -> 0.7, so dark clothing no longer counts as shadow.
+  - extract_stickers() takes the app's "Night mode" and "Shadow removal"
+    settings (None = automatic).
+
 KNOWN LIMITATIONS:
   - If something stays in the same place for more than half of the clip,
     the median treats it as background. If it then leaves, the empty spot
@@ -80,10 +89,22 @@ NIGHT_GAMMA = 0.6
 # A pixel counts as shadow if it is darker than the background by a
 # "shadow-like" amount (between SHADOW_DARKEST and SHADOW_LIGHTEST of the
 # background's brightness) while keeping roughly the same colour.
-SHADOW_DARKEST = 0.4    # darker than 40% of the background = a real object
+# 0.7 rather than 0.4: at 0.4, dark clothing (much darker than the floor,
+# with little colour) also passed as "shadow" and was cut out of people.
+# Tested on the burglary clip (Chloe): IoU 0.473 at 0.4, 0.532 at 0.7, and
+# 0.7 also had less extra area than no shadow removal at all.
+SHADOW_DARKEST = 0.7    # darker than 70% of the background = a real object
 SHADOW_LIGHTEST = 0.93  # barely darker (93%+) = just noise
 SHADOW_MAX_SAT_CHANGE = 40   # 0-255 scale
 SHADOW_MAX_HUE_CHANGE = 10   # 0-179 scale (OpenCV hue)
+
+# Shadow removal compares colour, so it only runs on footage that HAS
+# colour: the background's mean HSV saturation must be at least this.
+# Infrared/black-and-white CCTV has a saturation of 0 even when it is bright
+# enough not to count as night (the dog walk and bunny clips), and a dark
+# clip can still have colour (the indoor night clips), so "is it night?"
+# was the wrong test.
+COLOUR_MIN_SATURATION = 20   # 0-255 scale
 
 # Smallest shape that counts as a real object (step 3, Pati), as a share of
 # the frame's area instead of a fixed 500 px, so it means the same thing
@@ -103,7 +124,7 @@ DUPLICATE_OVERLAP = 0.7
 
 
 def make_sticker(frame, motion_mask, return_mask=False,
-                 colour_background=None, night=False):
+                 colour_background=None, shadows=True):
     """
     Turn one frame into a sticker (BGRA image, transparent background),
     or return None if nothing is moving.
@@ -118,8 +139,9 @@ def make_sticker(frame, motion_mask, return_mask=False,
                            no background yet
         colour_background: the colour (BGR) background model, used to
                            remove shadows (step 3). None = no shadow removal
-        night:             True for night clips. Shadow removal is skipped
-                           then, because dark frames have almost no colour
+        shadows:           False to skip shadow removal, e.g. on black-and-
+                           white/infrared footage, which has no colour for
+                           the HSV test to use (see has_colour())
 
     Our pipeline, built up from the research:
       1. Preprocess: greyscale, blur, night-clip check,
@@ -148,9 +170,9 @@ def make_sticker(frame, motion_mask, return_mask=False,
         return nothing
 
     # Step 3 (Pati): remove shadows, then clean the mask into solid shapes.
-    # Shadow removal is skipped at night: dark/infrared frames have almost
-    # no colour, so the hue and saturation checks would just be noise.
-    if colour_background is not None and not night:
+    # Shadow removal is skipped on footage with no colour (infrared/black
+    # and white), where the hue and saturation checks would just be noise.
+    if colour_background is not None and shadows:
         cleaned = clean_mask(motion_mask, frame=frame,
                              background=colour_background)
     else:
@@ -240,7 +262,7 @@ def night_contrast(gray):
 
 
 def estimate_background(video_path, samples=BACKGROUND_SAMPLES,
-                        return_colour=False):
+                        return_colour=False, use_clahe=None):
     """
     Build the starting background before the main pass over the video.
 
@@ -300,8 +322,10 @@ def estimate_background(video_path, samples=BACKGROUND_SAMPLES,
     if not grays:
         return (None, None, None) if return_colour else (None, None)
 
-    #Night clip if the typical (median) sample is dark
-    use_clahe = bool(np.median([np.mean(g) for g in grays]) < NIGHT_BRIGHTNESS)
+    #Night clip if the typical (median) sample is dark, unless the caller
+    #(e.g. the app's "Night mode" setting) has already decided
+    if use_clahe is None:
+        use_clahe = bool(np.median([np.mean(g) for g in grays]) < NIGHT_BRIGHTNESS)
     if use_clahe:
         grays = [night_contrast(g) for g in grays]
 
@@ -398,6 +422,18 @@ def background_motion_mask(gray, background):
     background_8bit = cv2.convertScaleAbs(background)
     return create_motion_mask(gray, background_8bit)
 
+
+
+def has_colour(colour_background):
+    """
+    True if the footage has enough colour for shadow removal: the colour
+    background's mean HSV saturation is at least COLOUR_MIN_SATURATION.
+    Black-and-white and infrared footage has a saturation of about 0.
+    """
+    if colour_background is None:
+        return False
+    hsv = cv2.cvtColor(cv2.convertScaleAbs(colour_background), cv2.COLOR_BGR2HSV)
+    return float(np.mean(hsv[:, :, 1])) >= COLOUR_MIN_SATURATION
 
 
 def shadow_mask(frame, background):
@@ -708,7 +744,8 @@ def mask_overlap(mask_a, mask_b):
 
 
 def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
-                     duplicate_overlap=DUPLICATE_OVERLAP):
+                     duplicate_overlap=DUPLICATE_OVERLAP, night=None,
+                     shadows=None):
     """
     Read a video and return a chronological list of (time_in_seconds, sticker).
 
@@ -722,6 +759,10 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
                        KEPT sticker's mask by more than this (IoU, 0 to 1),
                        so an object standing still doesn't give dozens of
                        near-identical stickers. 1.0 keeps every sticker.
+    night:   True/False = the user's "Night mode" choice (gamma + CLAHE on
+             or off). None = decide from the clip's brightness.
+    shadows: True/False = the user's "Shadow removal" choice. None = on if
+             the footage has colour (see has_colour()).
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -734,8 +775,11 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
     #clip-wide night/CLAHE decision. If this fails, background is None and
     #the first frame becomes the background, as before
     background, use_clahe, colour_background = estimate_background(
-        video_path, return_colour=True)
-    night = bool(use_clahe)
+        video_path, return_colour=True, use_clahe=night)
+
+    #Shadow removal: the user's choice, or on if the footage has colour
+    if shadows is None:
+        shadows = has_colour(colour_background)
 
     stickers = []
     last_kept_mask = None  # mask of the last sticker we kept
@@ -759,7 +803,7 @@ def extract_stickers(video_path, every_n_frames=15, progress_callback=None,
         if index % every_n_frames == 0:
             sticker, mask = make_sticker(frame, motion_mask, return_mask=True,
                                          colour_background=colour_background,
-                                         night=night)
+                                         shadows=shadows)
             if sticker is not None:
                 # Skip near-duplicates: compare with the last sticker we KEPT,
                 # not the last one made, so a slow drift still adds up to a
