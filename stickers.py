@@ -337,34 +337,43 @@ def create_motion_mask(current_gray, prev_gray):
 
 def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None):
     """
-    Update the running-average background model with a new frame.
+    Update background model for current frame
+
+    Arguments:
+    gray: current frame after preprocess_frame()
+    background: current background model (float32). None on first frame.
+    alpha: learning rate (how quickly background “learns”)
+    motion_mask: raw mask returned from background_motion_mask() for this
+    frame. None updates every pixel equally (old “blind” update)
+
+    Returns:
+    Updated background model (float32)
 
     New background = (1 - alpha) * old background + alpha * current frame
 
-    This should be called on EVERY frame (not just the frames we make
-    stickers from) so the background stays an accurate picture of the scene.
+    This function should be called on EVERY frame (not just to create stickers)
+    to ensure the model accurately represents the scene.
 
-    Selective update: if the frame's motion mask is given, only the pixels
-    where nothing is moving are updated at the normal rate. Moving pixels
-    are updated MOVING_ALPHA_FACTOR times slower. Without this, a person
-    who stands still is slowly blended into the background, so they fade
-    out of the mask, and when they walk off, the copy of them left in the
-    background shows up as a trail. Selective update: Koller et al. (1994),
-    as described in Piccardi (2004), Section 2.1.
-
-    Parameters:
-        gray:        the current frame after preprocess_frame()
-        background:  the current background model (float32), or None on
-                     the first frame
-        alpha:       learning rate, how quickly the background adapts
-        motion_mask: the raw mask from background_motion_mask() for this
-                     frame, or None to update every pixel the same (the
-                     old "blind" update)
-
-    Returns:
-        The updated background model (float32).
+    Selective update: If motion mask is provided, only non-moving pixels are updated
+    at normal speed while moving pixels are updated MOVING_ALPHA_FACTOR times
+    more slowly. Otherwise, someone who stays in one spot would gradually become
+    part of the background, causing their mask to change to show they are no longer
+    in the frame. When they move away, because there will still be a copy of them in
+    the background, it will appear to follow them (create a trail). Selective update
+    based on Koller et al. (1994), outlined in Piccardi (2004), Section 2.1.
     """
-      #The threshold misses the soft, blurred edges of a moving object, so the
+    #On the first frame there is no background yet, so the frame itself
+    #becomes the starting background. accumulateWeighted needs a float
+    #image to store the decimal values of the average, hence float32
+    if background is None:
+        return gray.astype(np.float32)
+
+    if motion_mask is None:
+        #Blind update: blends the whole frame into the background (in place)
+        cv2.accumulateWeighted(gray, background, alpha)
+        return background
+
+    #The threshold misses the soft, blurred edges of a moving object, so the
     #mask is grown a little to keep those edges out of the background too.
     #The raw mask is used rather than clean_mask(), which drops small
     #shapes and shadows, so those pixels would be learned at the full rate
@@ -376,7 +385,6 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None
     cv2.accumulateWeighted(gray, background, alpha, mask=cv2.bitwise_not(moving))
     cv2.accumulateWeighted(gray, background, alpha * MOVING_ALPHA_FACTOR, mask=moving)
     return background
-
 
 def background_motion_mask(gray, background):
     """

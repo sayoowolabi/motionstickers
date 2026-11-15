@@ -145,5 +145,14 @@ Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked f
 11. WW News (no date) CCTV Surveillance Camera Point Of View Of Rabbit Jumping Forward At Night - 4K stock video. Getty Images, no. 2044643186. Available at: https://www.gettyimages.ie/detail/video/surveillance-camera-point-of-view-of-rabbit-jumping-stock-footage/2044643186
 12. Beckham, R. (no date) Security Camera View Of Hooded Intruder With A Torch Entering A Home And Walking Upstairs Backlit Night - 4K stock video. Getty Images, no. 2200417282. Available at: https://www.gettyimages.ie/detail/video/security-camera-view-of-hooded-intruder-with-a-torch-stock-footage/2200417282
 13. tawattiw (no date) Burglar Stealing Valuables from Desk Inside House at Night - 4K stock video. Getty Images, no. 2298084001. Available at: https://www.gettyimages.ie/detail/video/burglar-stealing-valuables-from-desk-inside-house-at-stock-footage/2298084001
+14. GeeksforGeeks (no date) Python – Intensity Transformation Operations on Images. Available at: https://www.geeksforgeeks.org/python/python-intensity-transformation-operations-on-images/ (Accessed: October 2026).
+15. GeeksforGeeks (no date) CLAHE Histogram Equalization – OpenCV. Available at: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/ (Accessed: October 2026 ).
+16. GeeksforGeeks (no date) Program to extract frames using OpenCV-Python. Available at: https://www.geeksforgeeks.org/python/python-program-extract-frames-using-opencv/ (Accessed: November 2026).
+17. GeeksforGeeks (no date) Python OpenCV | cv2.cvtColor() method. Available at: https://www.geeksforgeeks.org/python/python-opencv-cv2-cvtcolor-method/ (Accessed: October 2026).
+18. GeeksforGeeks (no date) Image Resizing using OpenCV | Python. Available at: https://www.geeksforgeeks.org/python/image-resizing-using-opencv-python/ (Accessed:November 2026).
+19. GeeksforGeeks (no date) Python OpenCV | cv2.putText() method. Available at: https://www.geeksforgeeks.org/python/python-opencv-cv2-puttext-method/ (Accessed: October 2026).
+20. GeeksforGeeks (no date) How to Display Multiple Images in One Window using OpenCV Python? Available at: https://www.geeksforgeeks.org/python/how-to-display-multiple-images-in-one-window-using-opencv-python/ (Accessed:November 2026).
+21. GeeksforGeeks (no date) Command-Line Option and Argument Parsing using argparse in Python. Available at: https://www.geeksforgeeks.org/python/command-line-option-and-argument-parsing-using-argparse-in-python/ (Accessed:November 2026).
+22. GeeksforGeeks (no date) How to pass a list as a command-line argument with argparse? Available at: https://www.geeksforgeeks.org/python/how-to-pass-a-list-as-a-command-line-argument-with-argparse/ (Accessed:November 2026).
 
-[ADD: Sayo's and Pati's references, e.g. for CLAHE, gamma correction and HSV shadow removal]
+[ADD: Sayo's references]
