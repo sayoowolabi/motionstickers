@@ -61,6 +61,16 @@ with st.sidebar:
     overlap = st.slider("Skip near-duplicates", 0.5, 1.0, DUPLICATE_OVERLAP, 0.05,
                         help="Skips a sticker if it overlaps the last one by more than this. "
                              "Lower skips more. 1.0 keeps every sticker.")
+    # Footage settings: Auto works for most clips, but the user can override
+    # it if they know their footage (e.g. a bright infrared camera)
+    AUTO_ON_OFF = {"Auto": None, "On": True, "Off": False}
+    night_choice = st.selectbox("Night mode", list(AUTO_ON_OFF),
+                                help="Brightens and boosts contrast for dark footage. "
+                                     "Auto turns it on for dark clips.")
+    shadow_choice = st.selectbox("Shadow removal", list(AUTO_ON_OFF),
+                                 help="Removes shadows from the stickers. Auto turns it "
+                                      "on for colour footage and off for black-and-white "
+                                      "or infrared footage, where it doesn't work.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
 uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
@@ -73,7 +83,9 @@ if uploaded and st.button("Make stickers"):
 
     bar = st.progress(0.0, text="Looking for movement")
     try:
-        stickers = extract_stickers(video_path, every_n, bar.progress, overlap)
+        stickers = extract_stickers(video_path, every_n, bar.progress, overlap,
+                                    night=AUTO_ON_OFF[night_choice],
+                                    shadows=AUTO_ON_OFF[shadow_choice])
     except ValueError as err:
         st.error(f"{err} Try an MP4 file.")
         st.stop()
