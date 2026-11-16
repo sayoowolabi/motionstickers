@@ -47,7 +47,13 @@ Week 11 changes (Chloe, from the final evaluation):
 KNOWN LIMITATIONS:
   - If something stays in the same place for more than half of the clip,
     the median treats it as background. If it then leaves, the empty spot
-    shows up as motion until the slow update absorbs it.
+    shows up as motion until the slow update absorbs it. drop_ghosts() now
+    removes that empty spot from stickers while something else is moving.
+    It is still kept when nothing else is moving (it can't be told apart
+    from a person standing still), or when it touches a real object and
+    joins it as one shape (burglary clip, 13.5-17.5 s).
+  - The ghost check drops anything still when something else moves, so a
+    person standing still is dropped while another person walks past.
   - A permanent change (door left open, light switched on) takes about
     1 / (BACKGROUND_ALPHA * MOVING_ALPHA_FACTOR) frames to be absorbed,
     because it counts as "moving" and is learned at the slow rate.
