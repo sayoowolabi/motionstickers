@@ -13,9 +13,13 @@ The project uses classical image-processing techniques only (no machine learning
 
 
 ## How it's supposed to work
-1. **Preprocessing:** greyscale, blur, contrast enhancement for night footage
+1. **Preprocessing:** gBlur and greyscale. CLAHE and gamma correction applied only to night clips to enhance details in the dark. Per-video only, so no flicker.
 2. **Motion detection:** compare each frame with a running-average background (`cv2.accumulateWeighted`, updated every frame) to find what changed. The background starts as the median of frames across the clip and is only updated at full speed where nothing is moving (selective update)
-3. **Mask cleanup:** thresholding and morphology
+3. **Mask cleanup:** Remove shadows then use morphology to refine the mask (opening for noise removal and closing for gap filling) 
+- **Shadows:** are pixels that have only darkened and not changed colour (HSV method, Cucchiara et al., 2003). Only applied to colour video as there is no colour information in the infrared 
+- **Size filters:** - small objects are rejected as noise (scaled to full video size) and residual clusters smaller than 30% of the largest object are rejected. All other objects are retained so a dog alongside its owner will be retained 
+- **Ghost check:** - stationary objects are rejected if another object is moving 
+- **Whole-scene changes:** - if the “object” covers more than 50% of the video (such as an exposure change by the camera itself) then no sticker is produced
 4. **Cutout:** keep the moving object, make the background transparent, add a white sticker outline (scaled to the object's size, so it shows on 4K footage too)
 5. **Stickers:** skip near-duplicate stickers (an object standing still), then download them as a zip or a stop-motion GIF
 
