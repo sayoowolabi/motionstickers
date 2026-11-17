@@ -25,9 +25,10 @@ Week 10 changes (Pati, steps 1 and 3):
   - Night clips get gamma correction before CLAHE (NIGHT_GAMMA), so the
     dark areas have detail for CLAHE to work with. Uses Sayo's clip-wide
     night decision, so it doesn't flicker either.
-  - Shadow removal: an HSV test (Cucchiara et al., 2003) against a colour
-    copy of the background removes pixels that only got darker without
-    changing colour. Skipped on night clips.
+  - Shadow elimination using an HSV mask (Cucchiara et al., 2003) applied to a
+    coloured copy of the background to eliminate pixels that have gotten
+    darker but not a different colour. (Week 11: now only applies to colour
+    video, see below.)
 
 Week 11 changes (Chloe, from the final evaluation):
   - Shadow removal runs on footage that has colour, instead of on footage
@@ -205,24 +206,38 @@ def make_sticker(frame, motion_mask, return_mask=False,
                            no background yet
         colour_background: the colour (BGR) background model, used to
                            remove shadows (step 3). None = no shadow removal
-        shadows:           False to skip shadow removal, e.g. on black-and-
-                           white/infrared footage, which has no colour for
-                           the HSV test to use (see has_colour())
+        shadows:           If False shadows are stripped (useful for
+                           black-and-white or infrared where there is no
+                           colour to test using the HSV method (see has_colour())
+        change:            Change since GHOST_GAP frames ago, used for
+                           ghost detection. If None this step is skipped.
 
-    Our pipeline, built up from the research:
-      1. Preprocess: greyscale, blur, night-clip check,
-         gamma correction + CLAHE on night clips.
-      2. Motion mask: compare with a running-average background,
-         then threshold.
-      3. Clean the mask: remove shadows (HSV test against the colour
-         background), morphological opening/closing, keep every shape
-         above the minimum size, fill them in.
-      4. Enhance the object: contrast (CLAHE) and sharpening (unsharp mask).
-      5. Cut it out: use the mask as the alpha channel, crop to the
+Development of our system based on previous work:
+
+    1. Preprocessing - night clip correction (gamma + CLAHE),
+        greyscale, blur and check for clipping in the
+        night clips.
+
+    2. Motion mask - subtract from a running average background and
+        threshold the result.
+
+    3. Mask treatment - strip shadows using HSV test against the
+        colour background (only for colour video),
+        morphological opening and closing, minimum
+        object size (minimum size and RELATIVE_MIN_SIZE
+        of the largest object), fill the resulting
+        objects. Drop objects which are static whilst
+        another object is in motion (to eliminate ghosts)
+        and reject stickers which occupy more than
+        MAX_OBJECT_FRAC of the image.
+
+    4. Object enhancement - sharpening (unsharp mask) and contrast
+        augmentation (CLAHE).
+    5. Cut it out: use the mask as the alpha channel, crop to the
          bounding box, add a white outline by dilating the mask.
     """
 
-       # Steps 1 and 2 (preprocessing and the motion mask) are done once per
+    # Steps 1 and 2 (preprocessing and the motion mask) are done once per
     # frame in extract_stickers(), because the selective background update
     # needs the motion mask on every frame, not just sticker frames.
     if motion_mask is None:
@@ -580,9 +595,12 @@ def clean_mask(mask, min_area=None, frame=None, background=None):
     the edges that moved). This takes the shadows out, removes the specks,
     joins the outline up and fills it in.
 
-    Every shape above the minimum size is kept, not just the largest, so
-    two things moving at once (a person and their dog) both stay in. They
-    end up in the same sticker, since a sticker is cut from the whole mask.
+    More than just the largest shape is retained; 
+    all shapes larger than the minimum size are retained. 
+    If a person and their dog are both present, both are both retained as long as 
+    each is RELATIVE_MIN_SIZE (30%) of the largest shape. Garbage such as glare, ghost patches, etc. 
+    are discarded if they are smaller than the minimum size.
+    Shapes end up in the same sticker because each sticker is cut from the full mask.
 
     Parameters:
         mask:       black/white motion mask from create_motion_mask()
