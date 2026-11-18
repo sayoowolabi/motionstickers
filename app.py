@@ -87,31 +87,89 @@ if uploaded and st.button("Make stickers"):
                                     night=AUTO_ON_OFF[night_choice],
                                     shadows=AUTO_ON_OFF[shadow_choice])
     except ValueError as err:
+        st.session_state.stickers = []   # NEW: clear old stickers so they don't show under the error
         st.error(f"{err} Try an MP4 file.")
         st.stop()
     bar.empty()
+    # NEW: save the stickers so they're still there when a checkbox is ticked.
+    # Streamlit re-runs the whole script on every click, and the button above
+    # is only True on the run straight after it's pressed
+    st.session_state.stickers = stickers
+    # NEW: a new number for each video, so the checkboxes start ticked again
+    st.session_state.run_id = st.session_state.get("run_id", 0) + 1
 
     if not stickers:
         st.info("No movement found. Try a lower 'every Nth frame' value in Settings.")
         st.stop()
 
+# NEW: show the saved stickers on every re-run, not just straight after the button
+stickers = st.session_state.get("stickers")
+if stickers:
     st.subheader(f"{len(stickers)} stickers, in the order they appeared")
 
-    figures = []
+    # NEW: human-in-the-loop review. The pipeline can't catch every mistake
+    # (stray blobs, bits of background), so the user unticks bad stickers and
+    # only the ticked ones go into the zip and the GIF
+    st.caption("Untick any sticker you don't want, like a stray blob or a bit of "
+               "background. Only ticked stickers go into the downloads.")
+
+    # NEW: one checkbox key per sticker. The run_id makes the keys different
+    # for each video, so a new video starts with every box ticked
+    keys = [f"keep_{st.session_state.run_id}_{i}" for i in range(len(stickers))]
+    for key in keys:
+        st.session_state.setdefault(key, True)        # ticked by default
+
+    # NEW: the Tick all / Untick all buttons call this before the page re-runs
+    def set_all(keys, value):
+        for key in keys:
+            st.session_state[key] = value
+
+    # NEW: the ticked stickers, worked out before drawing the page so the
+    # counter can go at the top
+    keep = [(t, sticker) for key, (t, sticker) in zip(keys, stickers)
+            if st.session_state[key]]
+
+    # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter
+    col_all, col_none, col_count = st.columns([1, 1, 4])
+    col_all.button("Tick all", on_click=set_all, args=(keys, True))
+    col_none.button("Untick all", on_click=set_all, args=(keys, False))
+    col_count.markdown(f"Keeping **{len(keep)} of {len(stickers)}** stickers")
+
+    # NEW: the sticker grid, 4 per row, each sticker with its checkbox underneath
+    for row_start in range(0, len(stickers), 4):
+        cols = st.columns(4)
+        for col, i in zip(cols, range(row_start, min(row_start + 4, len(stickers)))):
+            t, sticker = stickers[i]
+            with col:
+                st.markdown(sticker_figure(sticker, t, i), unsafe_allow_html=True)
+                st.checkbox(f"Keep ({t:.1f} s)", key=keys[i])
+
+    # NEW: nothing to download if every box is unticked
+    if not keep:
+        st.warning("Tick at least one sticker to download.")
+        st.stop()
+
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zf:
-        for i, (t, sticker) in enumerate(stickers):
-            figures.append(sticker_figure(sticker, t, i))
+        for i, (t, sticker) in enumerate(keep):           # CHANGED: only the ticked stickers
             ok, png = cv2.imencode(".png", sticker)          # PNG keeps transparency
             zf.writestr(f"sticker_{i:03d}_{t:.1f}s.png", png.tobytes())
 
-    st.markdown('<div class="sheet">' + "".join(figures) + "</div>", unsafe_allow_html=True)
     col_zip, col_gif = st.columns(2)
     with col_zip:
         st.download_button("Download all stickers (.zip)", zip_buffer.getvalue(),
                            file_name="stickers.zip", mime="application/zip")
     with col_gif:
-        gif = make_gif(stickers)
+        gif = make_gif(keep)                               # CHANGED: only the ticked stickers
         if gif:
             st.download_button("Download stop-motion (.gif)", gif,
                                file_name="stickers.gif", mime="image/gif")
+            # NEW: preview the GIF here, so you can check it without downloading.
+            # Shown as HTML, because st.image() resizes the GIF and only keeps
+            # its first frame. Styled like the stickers, but without the tilt
+            b64_gif = base64.b64encode(gif).decode()
+            st.markdown(f'<figure class="sticker" style="--tilt:0deg">'
+                        f'<img src="data:image/gif;base64,{b64_gif}" alt="Stop-motion preview" '
+                        f'style="width:100%; max-width:420px">'
+                        f'<figcaption>Stop-motion preview</figcaption></figure>',
+                        unsafe_allow_html=True)
