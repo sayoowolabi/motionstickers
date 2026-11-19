@@ -91,15 +91,15 @@ def confetti(pieces=120, slowest=8.0, fastest=5.0):
         f'<div class="confetti">{"".join(bits)}</div>', unsafe_allow_html=True)
 
 
-def preview_placeholder(message):
-    """NEW: a dashed "empty sticker" for the preview corner when there's no GIF
-    yet, so the top right of the page isn't just a blank gap."""
-    return ('<figure class="sticker" style="--tilt:2deg">'
+def preview_placeholder(message, label="Stop-motion preview", tilt=2):
+    """NEW: a dashed "empty sticker" for a preview spot that has nothing in it
+    yet (no GIF, or no video uploaded), so the page isn't just a blank gap."""
+    return (f'<figure class="sticker" style="--tilt:{tilt}deg">'
             '<div style="border:2px dashed #f5c542; border-radius:16px; '
             'width:100%; max-width:320px; height:190px; margin:auto; padding:12px; '
             'display:flex; align-items:center; justify-content:center; '
             f'text-align:center; opacity:0.85">{message}</div>'
-            '<figcaption>Stop-motion preview</figcaption></figure>')
+            f'<figcaption>{label}</figcaption></figure>')
 
 
 # ------------------------------------------------------------------ layout --
@@ -129,7 +129,13 @@ preview_slot = col_gif.empty()
 preview_slot.markdown(preview_placeholder("Your stop-motion will appear here ✂️"),
                       unsafe_allow_html=True)
 
-if uploaded:
+if not uploaded:
+    # NEW: placeholder for the clip until a video is uploaded, matching the
+    # stop-motion one next to it (tilted the other way)
+    col_clip.markdown(preview_placeholder("Your clip will appear here 🎬",
+                                          label="Your clip", tilt=-2),
+                      unsafe_allow_html=True)
+else:
     with col_clip:
         # getvalue() gives the bytes without using up the upload, so it can
         # still be saved to a temp file below
