@@ -16,6 +16,7 @@ import time
 import zipfile
 
 import cv2
+import numpy as np
 import streamlit as st
 
 from pathlib import Path
@@ -204,6 +205,128 @@ def example_stickers_html(message="Upload a clip and your stickers land here ✂
             f'<div class="example-row">{stickers}</div></div>')
 
 
+# NEW: timeline strip. A bar the length of the video with a dot where each
+# sticker was cut. Hover a dot to see its time; unticked stickers are faded.
+# The styling is in styles/style.css (.timeline, .track, .dot)
+def timeline_html(stickers, kept_flags, video_seconds):
+    """Build the timeline bar. video_seconds can be 0 if the video didn't
+    report its length, so fall back to just past the last sticker."""
+    last = max(t for t, _ in stickers)
+    length = video_seconds if video_seconds > 0 else max(last * 1.05, 1.0)
+    dots = []
+    for i, ((t, _), kept) in enumerate(zip(stickers, kept_flags)):
+        left = min(t / length, 1.0) * 100              # % along the bar
+        faded = "" if kept else " unticked"
+        dots.append(f'<span class="dot{faded}" style="left:{left:.2f}%" '
+                    f'title="Sticker {i + 1} · {t:.1f} s"><em>{t:.1f} s</em></span>')
+    return ('<div class="timeline">'
+            '<span class="tl-end">0 s</span>'
+            f'<div class="track">{"".join(dots)}</div>'
+            f'<span class="tl-end">{length:.1f} s</span></div>')
+
+
+# NEW: printable sticker sheet. Lays the kept stickers out on one A4 page with
+# OpenCV: alpha-blends each sticker onto a cream "cutting mat" background and
+# draws a grey cut line around it, found by growing the sticker's mask
+# (dilation) and tracing its outline (contours)
+SHEET_W, SHEET_H = 1240, 1754           # A4 at 150 dpi, in pixels
+SHEET_MARGIN = 80
+SHEET_TOP = 210                         # room for the title
+SHEET_BG = (225, 240, 245)              # cream, in BGR (#f5f0e1)
+SHEET_GRID = (205, 222, 230)            # slightly darker cream for the mat grid
+SHEET_TEXT = (51, 61, 31)               # dark green, in BGR (#1f3d33)
+CUT_LINE = (160, 160, 160)              # grey cut line
+
+
+def paste_sticker(page, sticker, x, y):
+    """Alpha-blend a BGRA sticker onto the BGR page with its top-left at (x, y):
+    result = alpha * sticker + (1 - alpha) * page."""
+    h, w = sticker.shape[:2]
+    alpha = sticker[:, :, 3:4].astype(float) / 255.0
+    region = page[y:y + h, x:x + w].astype(float)
+    blended = alpha * sticker[:, :, :3] + (1 - alpha) * region
+    page[y:y + h, x:x + w] = blended.astype("uint8")
+
+
+def make_sticker_sheet(keep):
+    """Return a PNG (bytes) of all the kept stickers on one printable A4 page."""
+    page = np.full((SHEET_H, SHEET_W, 3), SHEET_BG, dtype=np.uint8)
+    for gx in range(0, SHEET_W, 50):                    # faint cutting-mat grid
+        cv2.line(page, (gx, 0), (gx, SHEET_H), SHEET_GRID, 1)
+    for gy in range(0, SHEET_H, 50):
+        cv2.line(page, (0, gy), (SHEET_W, gy), SHEET_GRID, 1)
+
+    # Title and a short instruction
+    cv2.putText(page, "Motion Stickers!", (SHEET_MARGIN, 120),
+                cv2.FONT_HERSHEY_DUPLEX, 2.4, SHEET_TEXT, 4, cv2.LINE_AA)
+    cv2.putText(page, f"{len(keep)} stickers - cut along the grey lines",
+                (SHEET_MARGIN, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                SHEET_TEXT, 2, cv2.LINE_AA)
+
+    # Grid of cells: 3 across for a few stickers, 4 across for more
+    cols = 3 if len(keep) <= 9 else 4
+    rows = -(-len(keep) // cols)                        # ceiling division
+    cell_w = (SHEET_W - 2 * SHEET_MARGIN) // cols
+    cell_h = min(cell_w, (SHEET_H - SHEET_TOP - SHEET_MARGIN) // rows)
+    pad, label_h = 24, 34                               # space round each sticker
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    for i, (t, sticker) in enumerate(keep):
+        row, col = divmod(i, cols)
+        # Shrink (or grow) the sticker to fit its cell, keeping its shape
+        h, w = sticker.shape[:2]
+        scale = min((cell_w - 2 * pad) / w, (cell_h - 2 * pad - label_h) / h)
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        small = cv2.resize(sticker, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # Centre it in the cell
+        x = SHEET_MARGIN + col * cell_w + (cell_w - new_w) // 2
+        y = SHEET_TOP + row * cell_h + pad + (cell_h - 2 * pad - label_h - new_h) // 2
+
+        # Cut line: grow the sticker's mask a little so the line sits just
+        # outside it, then draw the outline of the grown mask
+        mask = (small[:, :, 3] > 0).astype(np.uint8) * 255
+        mask = cv2.copyMakeBorder(mask, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+        grown = cv2.dilate(mask, kernel)
+        contours, _ = cv2.findContours(grown, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(page, contours, -1, CUT_LINE, 2, cv2.LINE_AA,
+                         offset=(x - 10, y - 10))
+
+        paste_sticker(page, small, x, y)
+
+        # Time label under the sticker
+        label = f"{t:.1f} s"
+        (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        lx = SHEET_MARGIN + col * cell_w + (cell_w - tw) // 2
+        ly = SHEET_TOP + (row + 1) * cell_h - pad
+        cv2.putText(page, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    SHEET_TEXT, 2, cv2.LINE_AA)
+
+    ok, png = cv2.imencode(".png", page)
+    return png.tobytes()
+
+
+# NEW: footer details. Check the names and module before submitting
+TEAM = ["Patrycja", "Chloe", "Sayo"]
+MODULE = "Image Processing · 4th Year · 2026"
+REPO_URL = "https://github.com/sayoowolabi/motionstickers"
+
+
+def render_footer():
+    """NEW: footer with a dashed "cut here" line, the team as little name-tag
+    stickers, the module, and a GitHub button. Styling is in styles/style.css
+    (.footer). Called before every st.stop() too, so it's always at the bottom."""
+    tilts = [-3, 2, -1.5, 3]                 # hand-placed look, like the steps
+    tags = "".join(f'<span class="name-tag" style="--tilt:{tilts[i % 4]}deg">{name}</span>'
+                   for i, name in enumerate(TEAM))
+    st.markdown('<div class="footer">'
+                '<div class="cut-line"><span>✂️</span></div>'
+                f'<div class="footer-names"><span class="made">Made by</span>{tags}</div>'
+                f'<div class="footer-info">{MODULE}'
+                f'<a class="gh" href="{REPO_URL}" target="_blank">View on GitHub ↗</a>'
+                '</div></div>', unsafe_allow_html=True)
+
+
 # ------------------------------------------------------------------ layout --
 # NEW: everything you do goes down the left (title, steps, upload, button),
 # and the right has two previews side by side: your clip (the input) and the
@@ -326,6 +449,7 @@ if make:                                  # CHANGED: the button is now drawn at 
         st.session_state.stats = None    # NEW: and the old stats
         steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
         st.error(f"{err} Try an MP4 file.")
+        render_footer()                  # NEW: keep the footer on the page
         st.stop()
     bar.empty()
     # NEW: save the stickers so they're still there when a checkbox is ticked.
@@ -345,6 +469,7 @@ if make:                                  # CHANGED: the button is now drawn at 
     if not stickers:
         steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
         st.info("No movement found. Try a lower 'every Nth frame' value in Settings.")
+        render_footer()                  # NEW: keep the footer on the page
         st.stop()
 
     # NEW: a little celebration when the stickers are ready. Only on the run
@@ -369,6 +494,9 @@ if stickers:
     # NEW: the stats panel, if this run saved some
     if st.session_state.get("stats"):
         st.markdown(stats_panel(st.session_state.stats), unsafe_allow_html=True)
+    # NEW: a slot for the timeline strip, filled in once we know which
+    # stickers are ticked
+    timeline_slot = st.empty()
 
     # NEW: human-in-the-loop review. The pipeline can't catch every mistake
     # (stray blobs, bits of background), so the user unticks bad stickers and
@@ -391,6 +519,12 @@ if stickers:
     # counter can go at the top
     keep = [(t, sticker) for key, (t, sticker) in zip(keys, stickers)
             if st.session_state[key]]
+
+    # NEW: fill in the timeline strip
+    video_seconds = (st.session_state.get("stats") or {}).get("seconds", 0)
+    timeline_slot.markdown(timeline_html(stickers, [st.session_state[k] for k in keys],
+                                         video_seconds),
+                           unsafe_allow_html=True)
 
     # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter.
     # CHANGED: narrow columns with a small gap keep the buttons side by side,
@@ -415,6 +549,12 @@ if stickers:
                 st.markdown(sticker_figure(sticker, t, i, st.session_state[keys[i]]),
                             unsafe_allow_html=True)
                 st.checkbox(f"Keep ({t:.1f} s)", key=keys[i])
+                # NEW: download just this one sticker as a transparent PNG
+                ok, one_png = cv2.imencode(".png", sticker)
+                st.download_button("⬇ PNG", one_png.tobytes(),
+                                   file_name=f"sticker_{i + 1:02d}_{t:.1f}s.png",
+                                   mime="image/png",
+                                   key=f"dl_{st.session_state.run_id}_{i}")
 
     # NEW: nothing to download if every box is unticked
     if not keep:
@@ -423,6 +563,7 @@ if stickers:
                                                   tape="right"),
                               unsafe_allow_html=True)
         st.warning("Tick at least one sticker to download.")
+        render_footer()                  # NEW: keep the footer on the page
         st.stop()
 
     zip_buffer = io.BytesIO()
@@ -431,10 +572,15 @@ if stickers:
             ok, png = cv2.imencode(".png", sticker)          # PNG keeps transparency
             zf.writestr(f"sticker_{i:03d}_{t:.1f}s.png", png.tobytes())
 
-    col_zip, col_gif = st.columns(2)
+    # CHANGED: three download buttons now, with the printable sheet in the middle
+    col_zip, col_sheet, col_gif = st.columns(3)
     with col_zip:
         st.download_button("Download all stickers (.zip)", zip_buffer.getvalue(),
                            file_name="stickers.zip", mime="application/zip")
+    with col_sheet:
+        # NEW: printable A4 sticker sheet of the ticked stickers
+        st.download_button("Download printable sheet (.png)", make_sticker_sheet(keep),
+                           file_name="sticker_sheet.png", mime="image/png")
     with col_gif:
         gif = make_gif(keep)                               # CHANGED: only the ticked stickers
         if gif:
@@ -460,3 +606,6 @@ if stickers:
                                   f'</div>'
                                   f'<figcaption>Stop-motion preview</figcaption></figure>',
                                   unsafe_allow_html=True)
+
+# NEW: footer at the bottom of the page
+render_footer()

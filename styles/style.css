@@ -324,3 +324,155 @@ details.zoom > summary:focus {
     padding: 2px 9px;
     border-radius: 999px;
 }
+
+.timeline {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 4px 0 22px;
+    max-width: 900px;
+}
+
+/* "0 s" and the video length at each end */
+.tl-end {
+    font-size: 0.85rem;
+    opacity: 0.75;
+    white-space: nowrap;
+}
+
+/* The bar itself */
+.track {
+    position: relative;
+    flex: 1;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px dashed rgba(245, 197, 66, 0.6);
+}
+
+/* One dot per sticker */
+.dot {
+    position: absolute;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    margin-left: -8px;                   /* centre the dot on its time */
+    transform: translateY(-50%);
+    border-radius: 50%;
+    background: #f5c542;
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    cursor: default;
+    transition: transform 0.15s ease, opacity 0.2s ease;
+}
+.dot:hover {
+    transform: translateY(-50%) scale(1.35);
+    z-index: 2;
+}
+.dot.unticked {
+    opacity: 0.3;
+}
+
+/* Time label that pops up above a dot on hover */
+.dot em {
+    display: none;
+    position: absolute;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-style: normal;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    background: #f5c542;
+    color: #1f3d33;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+.dot:hover em {
+    display: block;
+}
+
+/* ---- NEW: footer --------------------------------------------------------- */
+.footer {
+    margin-top: 18vh;                    /* pushes it well down the page */
+    padding-bottom: 30px;
+    text-align: center;
+}
+
+/* Dashed "cut here" line with scissors sitting on it */
+.cut-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 34px;
+}
+.cut-line::before,
+.cut-line::after {
+    content: "";
+    border-top: 2px dashed rgba(245, 197, 66, 0.55);
+}
+.cut-line::before {
+    flex: 0 0 6%;
+}
+.cut-line::after {
+    flex: 1;
+}
+.cut-line span {
+    font-size: 1.3rem;
+    line-height: 1;
+}
+
+/* "Made by" and the name tags */
+.footer-names {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+.footer-names .made {
+    font-size: 1rem;
+    opacity: 0.8;
+    margin-right: 4px;
+}
+
+/* Cream name-tag stickers, tilted like the steps */
+.name-tag {
+    background: #f5f0e1;
+    color: #1f3d33;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 10px;
+    box-shadow: 0 5px 12px rgba(0, 0, 0, 0.3);
+    transform: rotate(var(--tilt));
+    transition: transform 0.2s ease;
+}
+.name-tag:hover {
+    transform: rotate(0deg) translateY(-3px) scale(1.06);
+}
+
+/* Module line and the GitHub button */
+.footer-info {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.9rem;
+    opacity: 0.85;
+}
+.footer-info .gh {
+    background: #f5c542;
+    color: #1f3d33 !important;
+    font-weight: 700;
+    text-decoration: none !important;
+    padding: 5px 14px;
+    border-radius: 999px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease;
+}
+.footer-info .gh:hover {
+    transform: translateY(-2px) scale(1.04);
+}
