@@ -40,13 +40,19 @@ def sticker_figure(sticker, t, i):
 
 
 # ------------------------------------------------------------------ layout --
-st.title("Motion Stickers!")
-st.markdown(
-    '<div class="steps">'
-    '<span class="step"><b>1</b>Upload your footage</span>'
-    '<span class="step"><b>2</b>We find what moves</span>'
-    '<span class="step"><b>3</b>Peel off the stickers</span>'
-    '</div>', unsafe_allow_html=True)
+# NEW: title and steps on the left, stop-motion preview on the right.
+# The GIF isn't made until further down the script, so keep an empty slot
+# here and fill it in once the GIF exists
+col_title, col_preview = st.columns([3, 1])
+with col_title:
+    st.title("Motion Stickers!")
+    st.markdown(
+        '<div class="steps">'
+        '<span class="step"><b>1</b>Upload your footage</span>'
+        '<span class="step"><b>2</b>We find what moves</span>'
+        '<span class="step"><b>3</b>Peel off the stickers</span>'
+        '</div>', unsafe_allow_html=True)
+preview_slot = col_preview.empty()
 
 with st.sidebar:
     st.header("Settings")
@@ -73,7 +79,10 @@ with st.sidebar:
                                       "or infrared footage, where it doesn't work.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
-uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
+# NEW: the upload box only takes up the left half of the page
+col_upload, _ = st.columns(2)
+with col_upload:
+    uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
 
 if uploaded and st.button("Make stickers"):
     # OpenCV needs a real file path, so save the upload to a temp file.
@@ -164,12 +173,14 @@ if stickers:
         if gif:
             st.download_button("Download stop-motion (.gif)", gif,
                                file_name="stickers.gif", mime="image/gif")
-            # NEW: preview the GIF here, so you can check it without downloading.
+            # NEW: preview the GIF so you can check it without downloading.
             # Shown as HTML, because st.image() resizes the GIF and only keeps
-            # its first frame. Styled like the stickers, but without the tilt
+            # its first frame. Styled like the stickers, but without the tilt.
+            # CHANGED: goes in the slot beside the title, not under the button
             b64_gif = base64.b64encode(gif).decode()
-            st.markdown(f'<figure class="sticker" style="--tilt:0deg">'
-                        f'<img src="data:image/gif;base64,{b64_gif}" alt="Stop-motion preview" '
-                        f'style="width:100%; max-width:420px">'
-                        f'<figcaption>Stop-motion preview</figcaption></figure>',
-                        unsafe_allow_html=True)
+            preview_slot.markdown(f'<figure class="sticker" style="--tilt:0deg">'
+                                  f'<img src="data:image/gif;base64,{b64_gif}" '
+                                  f'alt="Stop-motion preview" '
+                                  f'style="width:100%; max-width:260px">'
+                                  f'<figcaption>Stop-motion preview</figcaption></figure>',
+                                  unsafe_allow_html=True)
