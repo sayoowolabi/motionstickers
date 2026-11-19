@@ -121,7 +121,9 @@ with col_left:
     make = uploaded and st.button("Make stickers")
 
 # The clip gets the bigger share, the stop-motion preview the smaller
-col_clip, col_gif = col_right.columns([3, 2], gap="medium")
+# vertical_alignment="bottom" lines up the bottoms of the two previews, so
+# the "Your clip" and "Stop-motion preview" badges sit at the same height
+col_clip, col_gif = col_right.columns([3, 2], gap="medium", vertical_alignment="bottom")
 
 # The GIF isn't made until further down the script, so keep an empty slot
 # here and fill it in once the GIF exists. Until then, show the placeholder
@@ -217,7 +219,8 @@ if make:                                  # CHANGED: the button is now drawn at 
 # NEW: show the saved stickers on every re-run, not just straight after the button
 stickers = st.session_state.get("stickers")
 if stickers:
-    st.subheader(f"{len(stickers)} stickers, in the order they appeared")
+    # anchor=False hides the little link icon Streamlit puts next to headings
+    st.subheader(f"{len(stickers)} stickers, in the order they appeared", anchor=False)
 
     # NEW: human-in-the-loop review. The pipeline can't catch every mistake
     # (stray blobs, bits of background), so the user unticks bad stickers and
@@ -241,11 +244,18 @@ if stickers:
     keep = [(t, sticker) for key, (t, sticker) in zip(keys, stickers)
             if st.session_state[key]]
 
-    # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter
-    col_all, col_none, col_count = st.columns([1, 1, 4])
+    # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter.
+    # CHANGED: narrow columns with a small gap keep the buttons side by side,
+    # and the counter is a yellow pill to match the other badges
+    col_all, col_none, col_count, _ = st.columns([1, 1, 2, 4], gap="small",
+                                                  vertical_alignment="center")
     col_all.button("Tick all", on_click=set_all, args=(keys, True))
     col_none.button("Untick all", on_click=set_all, args=(keys, False))
-    col_count.markdown(f"Keeping **{len(keep)} of {len(stickers)}** stickers")
+    col_count.markdown(
+        '<span style="background:#f5c542; color:#1f3d33; font-weight:600; '
+        'font-size:15px; padding:6px 16px; border-radius:999px; white-space:nowrap">'
+        f'Keeping {len(keep)} of {len(stickers)} stickers</span>',
+        unsafe_allow_html=True)
 
     # NEW: the sticker grid, 4 per row, each sticker with its checkbox underneath
     for row_start in range(0, len(stickers), 4):
