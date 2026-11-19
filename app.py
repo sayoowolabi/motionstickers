@@ -96,18 +96,19 @@ def preview_placeholder(message):
     yet, so the top right of the page isn't just a blank gap."""
     return ('<figure class="sticker" style="--tilt:2deg">'
             '<div style="border:2px dashed #f5c542; border-radius:16px; '
-            'width:100%; max-width:260px; height:150px; margin:auto; padding:12px; '
+            'width:100%; max-width:320px; height:190px; margin:auto; padding:12px; '
             'display:flex; align-items:center; justify-content:center; '
             f'text-align:center; opacity:0.85">{message}</div>'
             '<figcaption>Stop-motion preview</figcaption></figure>')
 
 
 # ------------------------------------------------------------------ layout --
-# NEW: title and steps on the left, stop-motion preview on the right.
-# The GIF isn't made until further down the script, so keep an empty slot
-# here and fill it in once the GIF exists
-col_title, col_preview = st.columns([3, 1])
-with col_title:
+# NEW: everything you do goes down the left (title, steps, upload, button),
+# and the right has two previews side by side: your clip (the input) and the
+# stop-motion (the output). vertical_alignment centres the previews against
+# the left-hand column, so there's no big gap under the title
+col_left, col_right = st.columns([1, 1], gap="large", vertical_alignment="center")
+with col_left:
     st.title("Motion Stickers!")
     st.markdown(
         '<div class="steps">'
@@ -115,10 +116,41 @@ with col_title:
         '<span class="step"><b>2</b>We find what moves</span>'
         '<span class="step"><b>3</b>Peel off the stickers</span>'
         '</div>', unsafe_allow_html=True)
-preview_slot = col_preview.empty()
-# NEW: show the placeholder until there's a GIF to put here
+    uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
+    # The button sits right under the upload box
+    make = uploaded and st.button("Make stickers")
+
+# The clip gets the bigger share, the stop-motion preview the smaller
+col_clip, col_gif = col_right.columns([3, 2], gap="medium")
+
+# The GIF isn't made until further down the script, so keep an empty slot
+# here and fill it in once the GIF exists. Until then, show the placeholder
+preview_slot = col_gif.empty()
 preview_slot.markdown(preview_placeholder("Your stop-motion will appear here ✂️"),
                       unsafe_allow_html=True)
+
+if uploaded:
+    with col_clip:
+        # getvalue() gives the bytes without using up the upload, so it can
+        # still be saved to a temp file below
+        st.video(uploaded.getvalue())
+        # Video styled like a cut-out stuck on the mat: rounded corners, a
+        # deep shadow, a yellow dashed "cut here" line around it, and a
+        # slight tilt. It lifts and straightens on hover like the stickers.
+        # Comes with a yellow "Your clip" label to match "Stop-motion preview"
+        st.markdown('<style>video{max-height:320px; width:auto !important; '
+                    'max-width:100%; display:block; margin:12px auto 0; '
+                    'background:#000; border-radius:14px; '
+                    'box-shadow:0 14px 28px rgba(0,0,0,0.45); '
+                    'outline:2px dashed #f5c542; outline-offset:6px; '
+                    'transform:rotate(-2deg); transition:transform 0.25s ease}'
+                    'video:hover{transform:rotate(0deg) translateY(-4px) scale(1.02)}'
+                    '</style>'
+                    '<div style="text-align:center; margin-top:18px">'
+                    '<span style="background:#f5c542; color:#1f3d33; font-weight:600; '
+                    'font-size:14px; padding:4px 14px; border-radius:999px">'
+                    'Your clip</span></div>',
+                    unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("Settings")
@@ -145,15 +177,10 @@ with st.sidebar:
                                       "or infrared footage, where it doesn't work.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
-# NEW: the upload box only takes up the left half of the page
-col_upload, _ = st.columns(2)
-with col_upload:
-    uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
-
-if uploaded and st.button("Make stickers"):
+if make:                                  # CHANGED: the button is now drawn at the top
     # OpenCV needs a real file path, so save the upload to a temp file.
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-        tmp.write(uploaded.read())
+        tmp.write(uploaded.getvalue())   # CHANGED: getvalue(), as the preview reads it too
         video_path = tmp.name
 
     bar = st.progress(0.0, text="Looking for movement")
@@ -256,6 +283,6 @@ if stickers:
             preview_slot.markdown(f'<figure class="sticker" style="--tilt:0deg">'
                                   f'<img src="data:image/gif;base64,{b64_gif}" '
                                   f'alt="Stop-motion preview" '
-                                  f'style="width:100%; max-width:260px">'
+                                  f'style="width:100%; max-width:320px">'
                                   f'<figcaption>Stop-motion preview</figcaption></figure>',
                                   unsafe_allow_html=True)
