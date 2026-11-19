@@ -88,3 +88,57 @@ figure.sticker.unticked:hover {
     opacity: 0.6;
     transform: rotate(0deg) translateY(-4px) scale(0.98);
 }
+
+/* Hide the little triangle a <details> normally shows */
+details.zoom > summary {
+    list-style: none;
+    cursor: zoom-in;
+}
+details.zoom > summary::-webkit-details-marker {
+    display: none;
+}
+
+/* The full-size view is hidden until the sticker is clicked */
+details.zoom .zoom-big {
+    display: none;
+}
+
+/* Once clicked: a dark full-screen overlay with the sticker in the middle.
+   It's still inside the <summary>, so clicking it closes the view again */
+details.zoom[open] .zoom-big {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    position: fixed;
+    inset: 0;
+    z-index: 999990;
+    background: rgba(10, 25, 20, 0.85);
+    cursor: zoom-out;
+    animation: zoom-in 0.2s ease-out;
+}
+
+/* Full size, but never bigger than the screen */
+details.zoom[open] .zoom-big img {
+    width: 80vw;
+    height: 75vh;
+    object-fit: contain;
+    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.5));
+}
+
+details.zoom > summary:focus {
+    outline: none;
+}
+
+.zoom-caption {
+    color: #f5f0e1;
+    font-size: 0.95rem;
+    opacity: 0.85;
+}
+
+/* Small pop-in when it opens */
+@keyframes zoom-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to   { opacity: 1; transform: scale(1); }
+}

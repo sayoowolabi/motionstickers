@@ -29,7 +29,13 @@ st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 def sticker_figure(sticker, t, i, kept=True):
     """Turn one BGRA sticker into an HTML <figure> for the sticker sheet.
-    Unticked stickers get the "unticked" class so the CSS can fade them out."""
+    Unticked stickers get the "unticked" class so the CSS can fade them out.
+    NEW: clicking the sticker opens it full size; clicking again closes it."""
+    # NEW: full-size copy for the enlarged view, made before shrinking
+    ok, big_png = cv2.imencode(".png", sticker)
+    big_b64 = base64.b64encode(big_png.tobytes()).decode()
+    big_h, big_w = sticker.shape[:2]                # full size, for the caption
+
     h, w = sticker.shape[:2]
     if w > 400:                                   # shrink for display only
         sticker = cv2.resize(sticker, (400, int(h * 400 / w)))
@@ -37,9 +43,18 @@ def sticker_figure(sticker, t, i, kept=True):
     b64 = base64.b64encode(png.tobytes()).decode()
     tilt = [-3, 2, -1.5, 3, -2, 1][i % 6]         # varied tilt, like hand-placed stickers
     faded = "" if kept else " unticked"           # NEW: faded look for unticked stickers
-    return (f'<figure class="sticker{faded}" style="--tilt:{tilt}deg">'
+
+    # NEW: click to enlarge. <details> opens and closes on click with no
+    # JavaScript. When it's open, the CSS turns .zoom-big into a full-screen
+    # dark overlay, and clicking the overlay closes it again
+    return (f'<details class="zoom"><summary>'
+            f'<figure class="sticker{faded}" style="--tilt:{tilt}deg">'
             f'<img src="data:image/png;base64,{b64}" alt="Sticker at {t:.1f} seconds">'
-            f'<figcaption>{t:.1f} s</figcaption></figure>')
+            f'<figcaption>{t:.1f} s</figcaption></figure>'
+            f'<span class="zoom-big">'
+            f'<img src="data:image/png;base64,{big_b64}" alt="Sticker at {t:.1f} seconds, full size">'
+            f'<span class="zoom-caption">{t:.1f} s · {big_w} × {big_h} px original · click anywhere to close</span>'
+            f'</span></summary></details>')
 
 
 # NEW: confetti colours, matching the yellow buttons plus a few bright extras
