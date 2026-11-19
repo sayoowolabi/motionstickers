@@ -160,6 +160,29 @@ def stats_panel(stats):
     return f'<div class="stats">{html}</div>'
 
 
+# NEW: the three steps at the top of the page. They're "live": the step
+# you're on is highlighted, finished steps get a tick, and later steps are
+# faded. The styling is in styles/style.css (.step.current/.done/.todo)
+STEPS = ["Upload your footage", "We find what moves", "Peel off the stickers"]
+
+
+def steps_html(current, working=False):
+    """NEW: HTML for the steps row. current is the step you're on (1, 2 or 3).
+    working=True makes the current step pulse while the video is processed."""
+    spans = []
+    for number, text in enumerate(STEPS, start=1):
+        if number < current:
+            state, badge = "done", "✓"           # finished: tick instead of number
+        elif number == current:
+            state, badge = "current", number
+            if working:
+                state += " working"              # pulses while processing
+        else:
+            state, badge = "todo", number
+        spans.append(f'<span class="step {state}"><b>{badge}</b>{text}</span>')
+    return f'<div class="steps">{"".join(spans)}</div>'
+
+
 # ------------------------------------------------------------------ layout --
 # NEW: everything you do goes down the left (title, steps, upload, button),
 # and the right has two previews side by side: your clip (the input) and the
@@ -168,13 +191,20 @@ def stats_panel(stats):
 col_left, col_right = st.columns([1, 1], gap="large", vertical_alignment="center")
 with col_left:
     st.title("Motion Stickers!")
-    st.markdown(
-        '<div class="steps">'
-        '<span class="step"><b>1</b>Upload your footage</span>'
-        '<span class="step"><b>2</b>We find what moves</span>'
-        '<span class="step"><b>3</b>Peel off the stickers</span>'
-        '</div>', unsafe_allow_html=True)
+    # CHANGED: the steps go in a slot, so they can be updated while the
+    # video is being processed further down the script
+    steps_slot = st.empty()
     uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
+
+    # NEW: which step are we on? Stickers ready -> 3, video uploaded -> 2,
+    # nothing yet -> 1
+    if st.session_state.get("stickers"):
+        current_step = 3
+    elif uploaded:
+        current_step = 2
+    else:
+        current_step = 1
+    steps_slot.markdown(steps_html(current_step), unsafe_allow_html=True)
     # The button sits right under the upload box
     make = uploaded and st.button("Make stickers")
 
@@ -249,6 +279,8 @@ if make:                                  # CHANGED: the button is now drawn at 
         tmp.write(uploaded.getvalue())   # CHANGED: getvalue(), as the preview reads it too
         video_path = tmp.name
 
+    # NEW: step 2 pulses while the video is processed
+    steps_slot.markdown(steps_html(2, working=True), unsafe_allow_html=True)
     bar = st.progress(0.0, text=LOADING_MESSAGES[0])
     started = time.perf_counter()        # NEW: time the run for the stats panel
     try:
@@ -261,6 +293,7 @@ if make:                                  # CHANGED: the button is now drawn at 
     except ValueError as err:
         st.session_state.stickers = []   # NEW: clear old stickers so they don't show under the error
         st.session_state.stats = None    # NEW: and the old stats
+        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
         st.error(f"{err} Try an MP4 file.")
         st.stop()
     bar.empty()
@@ -279,12 +312,15 @@ if make:                                  # CHANGED: the button is now drawn at 
                               "took": time.perf_counter() - started}
 
     if not stickers:
+        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
         st.info("No movement found. Try a lower 'every Nth frame' value in Settings.")
         st.stop()
 
     # NEW: a little celebration when the stickers are ready. Only on the run
     # straight after "Make stickers", not every time a checkbox is clicked
     confetti()
+    # NEW: all done, so step 3 is highlighted and steps 1 and 2 get ticks
+    steps_slot.markdown(steps_html(3), unsafe_allow_html=True)
 
 # NEW: show the saved stickers on every re-run, not just straight after the button
 stickers = st.session_state.get("stickers")

@@ -193,17 +193,53 @@ details.zoom > summary:focus {
     opacity: 0.8;
 }
 
-/* ---- NEW: bigger, yellow "Motion Stickers!" title -----------------------
-   Paste this at the very bottom of styles/style.css.
-   h1 is the st.title() heading. clamp() makes it scale with the window:
-   never smaller than 3.4rem, never bigger than 5rem. */
 [data-testid="stMainBlockContainer"] h1,
 .block-container h1 {
-    font-size: clamp(3.4rem, 5.5vw, 5rem) !important;
-    line-height: 1.05 !important;
+    /* Scales with the window, but small enough to stay on one line */
+    font-size: clamp(2.6rem, 4vw, 4.2rem) !important;
+    line-height: 1.15 !important;
+    white-space: nowrap;
     color: #f5c542 !important;
-    /* A solid dark offset shadow, so the title looks like a thick sticker
-       sitting on the mat */
-    text-shadow: 3px 4px 0 #14281f, 0 10px 22px rgba(0, 0, 0, 0.35);
-    letter-spacing: 0.5px;
+    /* Dark green sticker outline. paint-order draws the outline behind the
+       yellow, so the letters keep their full shape */
+    -webkit-text-stroke: 10px #14281f;
+    paint-order: stroke fill;
+    /* Soft shadow under the whole sticker, like the stickers on the mat */
+    text-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+    display: inline-block;
+    transform: rotate(-2deg);
+    transform-origin: left center;
+    padding: 0.1em 0.15em !important;
+}
+
+.step {
+    transition: background 0.3s ease, opacity 0.3s ease, scale 0.3s ease;
+}
+
+/* The step you're on */
+.step.current {
+    background: #f5c542 !important;
+    color: #1f3d33 !important;
+    scale: 1.08;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* Finished steps: green tick instead of the number */
+.step.done b {
+    color: #2e9e5b !important;
+}
+
+/* Steps still to come */
+.step.todo {
+    opacity: 0.55;
+}
+
+/* Step 2 gently pulses while the video is being processed */
+.step.working {
+    animation: step-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+    0%, 100% { scale: 1.08; }
+    50%      { scale: 1.16; }
 }
