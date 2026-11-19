@@ -21,25 +21,11 @@ Run with:
     python tune_night.py footage/night.mov --gammas 0.4 0.5 0.6 0.8 --out-dir gamma_tests
 
 After running, edit both NIGHT_BRIGHTNESS and NIGHT_GAMMA at the top of stickers.py.
-
-References (GeeksforGeeks tutorials this script is based on):
-  - Reading a video frame by frame with cv2.VideoCapture:
-    https://www.geeksforgeeks.org/python/python-program-extract-frames-using-opencv/
+References (full list in README.md):
   - Gamma (power-law) transformation, s = c * r ** gamma:
     https://www.geeksforgeeks.org/python/python-intensity-transformation-operations-on-images/
   - CLAHE with cv2.createCLAHE(clipLimit, tileGridSize):
     https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/
-  - Converting a frame to greyscale with cv2.cvtColor:
-    https://www.geeksforgeeks.org/python/python-opencv-cv2-cvtcolor-method/
-  - Shrinking an image with cv2.resize and INTER_AREA:
-    https://www.geeksforgeeks.org/python/image-resizing-using-opencv-python/
-  - Writing labels on an image with cv2.putText:
-    https://www.geeksforgeeks.org/python/python-opencv-cv2-puttext-method/
-  - Joining images side by side / on top of each other (np.concatenate):
-    https://www.geeksforgeeks.org/python/how-to-display-multiple-images-in-one-window-using-opencv-python/
-  - Command-line arguments with argparse, and nargs for lists:
-    https://www.geeksforgeeks.org/python/command-line-option-and-argument-parsing-using-argparse-in-python/
-    https://www.geeksforgeeks.org/python/how-to-pass-a-list-as-a-command-line-argument-with-argparse/
 """
 
 import argparse
