@@ -142,3 +142,68 @@ details.zoom > summary:focus {
     from { opacity: 0; transform: scale(0.95); }
     to   { opacity: 1; transform: scale(1); }
 }
+
+/* ---- NEW: less empty space above the title -----------------------------
+   Streamlit leaves a big gap at the top of the page by default. Both
+   selectors are here because different Streamlit versions use different
+   names for the main page container. */
+[data-testid="stMainBlockContainer"],
+.block-container {
+    padding-top: 2rem !important;
+}
+
+/* ---- NEW: stats panel ("stat stickers") ---------------------------------
+   A row of yellow cards under the sticker heading, e.g. "12 stickers found" */
+.stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin: 6px 0 18px;
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 120px;
+    padding: 10px 18px 12px;
+    background: #f5c542;
+    color: #1f3d33;
+    border-radius: 14px;
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3);
+    transform: rotate(var(--tilt));
+    transition: transform 0.25s ease;
+}
+
+/* Straightens and lifts on hover, like the stickers */
+.stat:hover {
+    transform: rotate(0deg) translateY(-4px) scale(1.04);
+}
+
+/* The big number */
+.stat b {
+    font-size: 1.6rem;
+    line-height: 1.2;
+}
+
+/* The label underneath */
+.stat span {
+    font-size: 0.85rem;
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+/* ---- NEW: bigger, yellow "Motion Stickers!" title -----------------------
+   Paste this at the very bottom of styles/style.css.
+   h1 is the st.title() heading. clamp() makes it scale with the window:
+   never smaller than 3.4rem, never bigger than 5rem. */
+[data-testid="stMainBlockContainer"] h1,
+.block-container h1 {
+    font-size: clamp(3.4rem, 5.5vw, 5rem) !important;
+    line-height: 1.05 !important;
+    color: #f5c542 !important;
+    /* A solid dark offset shadow, so the title looks like a thick sticker
+       sitting on the mat */
+    text-shadow: 3px 4px 0 #14281f, 0 10px 22px rgba(0, 0, 0, 0.35);
+    letter-spacing: 0.5px;
+}

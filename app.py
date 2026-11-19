@@ -12,6 +12,7 @@ import base64
 import io
 import random
 import tempfile
+import time
 import zipfile
 
 import cv2
@@ -100,6 +101,63 @@ def preview_placeholder(message, label="Stop-motion preview", tilt=2):
             'display:flex; align-items:center; justify-content:center; '
             f'text-align:center; opacity:0.85">{message}</div>'
             f'<figcaption>{label}</figcaption></figure>')
+
+
+# NEW: fun messages shown on the progress bar while the stickers are made.
+# They change every couple of seconds, so a long video doesn't look stuck
+LOADING_MESSAGES = [
+    "Sharpening the scissors ✂️",
+    "Hunting for movement 🔍",
+    "Learning what the empty room looks like 🏠",
+    "Spotting things that move 👀",
+    "Tidying up the edges 🧹",
+    "Shooing away shadows 🌑",
+    "Peeling off the stickers ✨",
+    "Arranging them on the mat 🗂️",
+]
+MESSAGE_SECONDS = 2.0                     # how long each message stays up
+
+
+def progress_with_messages(bar):
+    """NEW: wrap the progress bar so it shows a fun message as well as the
+    progress. extract_stickers() calls this with the fraction done (0 to 1),
+    exactly like it called bar.progress before."""
+    start = time.monotonic()
+
+    def update(fraction, *args, **kwargs):
+        step = int((time.monotonic() - start) / MESSAGE_SECONDS)
+        message = LOADING_MESSAGES[step % len(LOADING_MESSAGES)]
+        bar.progress(min(max(float(fraction), 0.0), 1.0), text=message)
+
+    return update
+
+
+def video_info(video_path):
+    """NEW: how many frames the video has and how long it is in seconds,
+    for the stats panel. Some videos don't report a frame rate, so guard
+    against dividing by zero."""
+    cap = cv2.VideoCapture(video_path)
+    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    seconds = frames / fps if fps > 0 else 0.0
+    return frames, seconds
+
+
+def stats_panel(stats):
+    """NEW: a row of yellow "stat stickers" showing what happened on this run.
+    The styling is in styles/style.css (.stats and .stat)."""
+    cards = [
+        (stats["stickers"], "stickers found"),
+        (f'{stats["seconds"]:.1f} s', "of video"),
+        (f'{stats["frames"]:,}', "frames checked"),
+        (f'{stats["took"]:.1f} s', "to make them"),
+    ]
+    tilts = [-2, 1.5, -1, 2]                # hand-placed look, like the stickers
+    html = "".join(f'<div class="stat" style="--tilt:{tilt}deg">'
+                   f'<b>{value}</b><span>{label}</span></div>'
+                   for (value, label), tilt in zip(cards, tilts))
+    return f'<div class="stats">{html}</div>'
 
 
 # ------------------------------------------------------------------ layout --
@@ -191,13 +249,18 @@ if make:                                  # CHANGED: the button is now drawn at 
         tmp.write(uploaded.getvalue())   # CHANGED: getvalue(), as the preview reads it too
         video_path = tmp.name
 
-    bar = st.progress(0.0, text="Looking for movement")
+    bar = st.progress(0.0, text=LOADING_MESSAGES[0])
+    started = time.perf_counter()        # NEW: time the run for the stats panel
     try:
-        stickers = extract_stickers(video_path, every_n, bar.progress, overlap,
+        # CHANGED: progress_with_messages(bar) instead of bar.progress, so the
+        # bar shows the fun loading messages
+        stickers = extract_stickers(video_path, every_n, progress_with_messages(bar),
+                                    overlap,
                                     night=AUTO_ON_OFF[night_choice],
                                     shadows=AUTO_ON_OFF[shadow_choice])
     except ValueError as err:
         st.session_state.stickers = []   # NEW: clear old stickers so they don't show under the error
+        st.session_state.stats = None    # NEW: and the old stats
         st.error(f"{err} Try an MP4 file.")
         st.stop()
     bar.empty()
@@ -207,6 +270,13 @@ if make:                                  # CHANGED: the button is now drawn at 
     st.session_state.stickers = stickers
     # NEW: a new number for each video, so the checkboxes start ticked again
     st.session_state.run_id = st.session_state.get("run_id", 0) + 1
+
+    # NEW: numbers for the stats panel, saved like the stickers so they
+    # stay on screen when a checkbox is clicked
+    frames, seconds = video_info(video_path)
+    st.session_state.stats = {"stickers": len(stickers), "seconds": seconds,
+                              "frames": frames,
+                              "took": time.perf_counter() - started}
 
     if not stickers:
         st.info("No movement found. Try a lower 'every Nth frame' value in Settings.")
@@ -221,6 +291,10 @@ stickers = st.session_state.get("stickers")
 if stickers:
     # anchor=False hides the little link icon Streamlit puts next to headings
     st.subheader(f"{len(stickers)} stickers, in the order they appeared", anchor=False)
+
+    # NEW: the stats panel, if this run saved some
+    if st.session_state.get("stats"):
+        st.markdown(stats_panel(st.session_state.stats), unsafe_allow_html=True)
 
     # NEW: human-in-the-loop review. The pipeline can't catch every mistake
     # (stray blobs, bits of background), so the user unticks bad stickers and
