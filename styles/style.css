@@ -62,3 +62,29 @@ h1 { font-size: 3.2rem !important; line-height: 1.05 !important; }
   background: #F5C542; color: #1B2B26; font-weight: 600; font-size: .85rem;
 }
 @media (prefers-reduced-motion: reduce) { .sticker { transition: none; } }
+
+/* Smooth movement for the hover lift and the fade */
+figure.sticker {
+    transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+/* Peel on hover: the sticker straightens, lifts and grows a little,
+   like it's being picked up off the mat */
+figure.sticker:hover {
+    transform: rotate(0deg) translateY(-8px) scale(1.06);
+    cursor: grab;
+}
+
+/* Unticked stickers fade back and shrink a little, so it's easy to see
+   which ones are left out of the downloads */
+figure.sticker.unticked {
+    opacity: 0.3;
+    transform: rotate(var(--tilt)) scale(0.92);
+}
+
+/* Hovering an unticked sticker brings it halfway back, so you can still
+   see it clearly before deciding to tick it again */
+figure.sticker.unticked:hover {
+    opacity: 0.6;
+    transform: rotate(0deg) translateY(-4px) scale(0.98);
+}
