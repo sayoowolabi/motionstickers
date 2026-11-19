@@ -92,14 +92,17 @@ def confetti(pieces=120, slowest=8.0, fastest=5.0):
         f'<div class="confetti">{"".join(bits)}</div>', unsafe_allow_html=True)
 
 
-def preview_placeholder(message, label="Stop-motion preview", tilt=2):
+def preview_placeholder(message, label="Stop-motion preview", tilt=2, tape="left"):
     """NEW: a dashed "empty sticker" for a preview spot that has nothing in it
-    yet (no GIF, or no video uploaded), so the page isn't just a blank gap."""
+    yet (no GIF, or no video uploaded), so the page isn't just a blank gap.
+    tape is which top corner gets a strip of washi tape ("left" or "right")."""
     return (f'<figure class="sticker" style="--tilt:{tilt}deg">'
-            '<div style="border:2px dashed #f5c542; border-radius:16px; '
+            '<div style="position:relative; border:2px dashed #f5c542; border-radius:16px; '
             'width:100%; max-width:320px; height:190px; margin:auto; padding:12px; '
             'display:flex; align-items:center; justify-content:center; '
-            f'text-align:center; opacity:0.85">{message}</div>'
+            'text-align:center">'
+            f'<span class="tape {tape}"></span>'            # NEW: washi tape
+            f'<span style="opacity:0.85">{message}</span></div>'
             f'<figcaption>{label}</figcaption></figure>')
 
 
@@ -183,12 +186,32 @@ def steps_html(current, working=False):
     return f'<div class="steps">{"".join(spans)}</div>'
 
 
+# NEW: example stickers shown before any real ones are made, so the bottom
+# of the page isn't empty and new users can see what they'll get.
+# (emoji, time) pairs, made to look like things a home camera might catch
+EXAMPLE_STICKERS = [("🚶", 0.5), ("🐕", 2.0), ("📦", 3.5), ("🐈", 5.0), ("🚲", 7.5)]
+
+
+def example_stickers_html(message="Upload a clip and your stickers land here ✂️"):
+    """NEW: a row of faded example stickers with a line explaining them.
+    The styling is in styles/style.css (.examples and .example-sticker)."""
+    tilts = [-4, 3, -2, 4, -3]
+    stickers = "".join(f'<div class="example-sticker" style="--tilt:{tilt}deg">'
+                       f'<span class="emoji">{emoji}</span><em>{t:.1f} s</em></div>'
+                       for (emoji, t), tilt in zip(EXAMPLE_STICKERS, tilts))
+    return ('<div class="examples">'
+            f'<p>{message}</p>'
+            f'<div class="example-row">{stickers}</div></div>')
+
+
 # ------------------------------------------------------------------ layout --
 # NEW: everything you do goes down the left (title, steps, upload, button),
 # and the right has two previews side by side: your clip (the input) and the
 # stop-motion (the output). vertical_alignment centres the previews against
 # the left-hand column, so there's no big gap under the title
-col_left, col_right = st.columns([1, 1], gap="large", vertical_alignment="center")
+# CHANGED: [6, 5] gives the left column a little more room, so all three
+# steps fit on one row
+col_left, col_right = st.columns([6, 5], gap="large", vertical_alignment="center")
 with col_left:
     st.title("Motion Stickers!")
     # CHANGED: the steps go in a slot, so they can be updated while the
@@ -216,17 +239,25 @@ col_clip, col_gif = col_right.columns([3, 2], gap="medium", vertical_alignment="
 # The GIF isn't made until further down the script, so keep an empty slot
 # here and fill it in once the GIF exists. Until then, show the placeholder
 preview_slot = col_gif.empty()
-preview_slot.markdown(preview_placeholder("Your stop-motion will appear here ✂️"),
+preview_slot.markdown(preview_placeholder("Your stop-motion will appear here ✂️",
+                                          tape="right"),
                       unsafe_allow_html=True)
 
 if not uploaded:
     # NEW: placeholder for the clip until a video is uploaded, matching the
     # stop-motion one next to it (tilted the other way)
     col_clip.markdown(preview_placeholder("Your clip will appear here 🎬",
-                                          label="Your clip", tilt=-2),
+                                          label="Your clip", tilt=-2, tape="left"),
                       unsafe_allow_html=True)
 else:
     with col_clip:
+        # NEW: washi tape on the video's top-left corner, like the placeholder
+        # had. st.video can't hold extra HTML, so the tape goes in a
+        # zero-height box just above the video and hangs down over its corner.
+        # z-index keeps it on top of the video
+        st.markdown('<div style="position:relative; height:0; z-index:5">'
+                    '<span class="tape left" style="top:14px"></span></div>',
+                    unsafe_allow_html=True)
         # getvalue() gives the bytes without using up the upload, so it can
         # still be saved to a temp file below
         st.video(uploaded.getvalue())
@@ -324,6 +355,13 @@ if make:                                  # CHANGED: the button is now drawn at 
 
 # NEW: show the saved stickers on every re-run, not just straight after the button
 stickers = st.session_state.get("stickers")
+
+# NEW: no stickers yet, so show the faded examples instead
+if not stickers:
+    # The line under the examples changes once a video is uploaded
+    message = ("Click <b>Make stickers</b> and they'll land here ✂️" if uploaded
+               else "Upload a clip and your stickers land here ✂️")
+    st.markdown(example_stickers_html(message), unsafe_allow_html=True)
 if stickers:
     # anchor=False hides the little link icon Streamlit puts next to headings
     st.subheader(f"{len(stickers)} stickers, in the order they appeared", anchor=False)
@@ -381,7 +419,8 @@ if stickers:
     # NEW: nothing to download if every box is unticked
     if not keep:
         # NEW: say why the preview is empty
-        preview_slot.markdown(preview_placeholder("Tick a sticker to see the stop-motion"),
+        preview_slot.markdown(preview_placeholder("Tick a sticker to see the stop-motion",
+                                                  tape="right"),
                               unsafe_allow_html=True)
         st.warning("Tick at least one sticker to download.")
         st.stop()
@@ -406,9 +445,18 @@ if stickers:
             # its first frame. Styled like the stickers, but without the tilt.
             # CHANGED: goes in the slot beside the title, not under the button
             b64_gif = base64.b64encode(gif).decode()
-            preview_slot.markdown(f'<figure class="sticker" style="--tilt:0deg">'
+            # NEW: the GIF sits inside the same dashed yellow box as the
+            # placeholder it replaces (same size, same tilt, same washi tape),
+            # centred and shrunk to fit, so the spot doesn't jump around
+            preview_slot.markdown(f'<figure class="sticker" style="--tilt:2deg">'
+                                  f'<div style="position:relative; border:2px dashed #f5c542; '
+                                  f'border-radius:16px; width:100%; max-width:320px; '
+                                  f'height:190px; margin:auto; padding:12px; '
+                                  f'display:flex; align-items:center; justify-content:center">'
+                                  f'<span class="tape right"></span>'
                                   f'<img src="data:image/gif;base64,{b64_gif}" '
                                   f'alt="Stop-motion preview" '
-                                  f'style="width:100%; max-width:320px">'
+                                  f'style="max-width:100%; max-height:100%; object-fit:contain">'
+                                  f'</div>'
                                   f'<figcaption>Stop-motion preview</figcaption></figure>',
                                   unsafe_allow_html=True)

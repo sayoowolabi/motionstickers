@@ -243,3 +243,84 @@ details.zoom > summary:focus {
     0%, 100% { scale: 1.08; }
     50%      { scale: 1.16; }
 }
+
+.steps {
+    flex-wrap: nowrap !important;
+}
+.step {
+    white-space: nowrap;
+}
+
+/* ---- NEW: washi tape on the preview boxes --------------------------------
+   A strip of see-through yellow tape across one top corner, as if the box
+   is taped to the cutting mat. The dotted ends look like torn tape edges. */
+.tape {
+    position: absolute;
+    top: -13px;
+    width: 86px;
+    height: 24px;
+    background: rgba(245, 197, 66, 0.55);
+    border-left: 2px dotted rgba(255, 255, 255, 0.35);
+    border-right: 2px dotted rgba(255, 255, 255, 0.35);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+}
+.tape.left {
+    left: 14px;
+    transform: rotate(-9deg);
+}
+.tape.right {
+    right: 14px;
+    transform: rotate(8deg);
+}
+
+/* ---- NEW: "what you'll get" example stickers -----------------------------
+   Faded stickers shown before any real ones are made. */
+.examples {
+    margin-top: 28px;
+    opacity: 0.5;
+    transition: opacity 0.3s ease;
+}
+.examples:hover {
+    opacity: 0.75;
+}
+
+.examples p {
+    font-size: 1.1rem;
+    margin-bottom: 18px;
+}
+
+.example-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 48px;
+    align-items: center;
+}
+
+.example-sticker {
+    position: relative;
+    transform: rotate(var(--tilt));
+}
+
+/* The emoji gets a white cut-out outline, like the real stickers */
+.example-sticker .emoji {
+    font-size: 4.5rem;
+    line-height: 1;
+    filter: drop-shadow(3px 0 0 #fff) drop-shadow(-3px 0 0 #fff)
+            drop-shadow(0 3px 0 #fff) drop-shadow(0 -3px 0 #fff)
+            drop-shadow(0 8px 10px rgba(0, 0, 0, 0.35));
+}
+
+/* Little yellow time badge, like the real stickers have */
+.example-sticker em {
+    position: absolute;
+    right: -30px;
+    top: 50%;
+    font-style: normal;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: #f5c542;
+    color: #1f3d33;
+    padding: 2px 9px;
+    border-radius: 999px;
+}
