@@ -1,0 +1,159 @@
+/* responsive.css - makes the page fit smaller windows and phones.
+   Loaded AFTER style.css in app.py, so these rules win when they clash.
+
+   How it works:
+   - Streamlit puts every st.columns() row in a flex box. On a normal screen
+     the columns are squeezed side by side however narrow the window gets
+     (Streamlit only stacks them on very small screens, under 640px).
+   - In app.py, each group of columns sits in a container with a key, e.g.
+     st.container(key="sticker-grid"). Streamlit gives that container the
+     class .st-key-sticker-grid, so we can target just that group here.
+   - flex-wrap: wrap + a minimum width per column means columns drop onto
+     the next line when there isn't room, instead of getting squashed.
+
+   Streamlit renamed the column test id in newer versions, so both
+   [data-testid="stColumn"] and [data-testid="column"] are listed. */
+
+
+/* ---------------------------------------------------- everything wraps -- */
+/* Rows of little cards (steps, stats, examples, footer) wrap onto a new
+   line when the window is narrow, instead of running off the side */
+.steps, .stats, .example-row, .footer-names, .footer-info {
+    flex-wrap: wrap;
+}
+
+/* Images can never be wider than the space they're in */
+img, video {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Title shrinks smoothly with the window: never smaller than 2rem,
+   never bigger than 3.2rem */
+h1 {
+    font-size: clamp(2rem, 6vw, 3.2rem) !important;
+}
+
+
+/* ---------------------------------------------------------- top layout -- */
+/* Left side (title, steps, upload) and right side (the two previews).
+   CHANGED: this uses a container query instead of a media query. A media
+   query looks at the whole browser window, but the Settings sidebar takes
+   ~350px of that, so the page squashed before the rule kicked in.
+   A container query looks at how wide the page area itself is.
+   container-type: inline-size makes .st-key-top-layout something we can
+   measure; @container (max-width: ...) then checks its width */
+.st-key-top-layout {
+    container-type: inline-size;
+}
+
+/* Under 1150px of page area there isn't room for the title, steps and
+   both previews side by side, so the previews go underneath */
+@container (max-width: 1150px) {
+    .st-key-top-layout [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap;
+    }
+    .st-key-top-layout [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    .st-key-top-layout [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        min-width: 0;
+    }
+    /* NEW: once the previews are underneath, they'd stretch across the
+       whole page and the video got huge. Keep the pair to a sensible
+       width, centred, with a little space above */
+    .st-key-top-layout .st-key-previews {
+        max-width: 760px;
+        margin: 1rem auto 0;
+    }
+    /* NEW: and keep the video short, about the same size as the
+       stop-motion box next to it. !important beats the style in app.py */
+    .st-key-top-layout video {
+        max-height: 230px !important;
+    }
+}
+
+/* The two previews (your clip + stop-motion) stay side by side, with the
+   clip a bit bigger (3 : 2, like in app.py), and only stack when there's
+   less than about 500px for them. The extra .st-key-top-layout at the
+   front makes this rule stronger than the one above, so the previews
+   don't get stacked along with everything else */
+.st-key-top-layout .st-key-previews [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap;
+}
+.st-key-top-layout .st-key-previews [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child,
+.st-key-top-layout .st-key-previews [data-testid="stHorizontalBlock"] > [data-testid="column"]:first-child {
+    flex: 3 1 260px !important;
+    width: auto !important;
+    min-width: 0;
+}
+.st-key-top-layout .st-key-previews [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child,
+.st-key-top-layout .st-key-previews [data-testid="stHorizontalBlock"] > [data-testid="column"]:last-child {
+    flex: 2 1 220px !important;
+    width: auto !important;
+    min-width: 0;
+}
+
+
+/* --------------------------------------------------------- sticker grid -- */
+/* 4 across on a big screen, 2 across on a laptop/tablet, 1 on a phone.
+   Each sticker column is at least 220px wide, so they wrap instead of
+   squashing the checkbox and download button */
+.st-key-sticker-grid [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap;
+}
+.st-key-sticker-grid [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+.st-key-sticker-grid [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    flex: 1 1 220px !important;
+    min-width: 220px;
+}
+
+
+/* ----------------------------------------- Tick all / Untick all / count -- */
+/* Each piece only takes the width it needs, and wraps if there's no room */
+.st-key-tick-row [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap;
+}
+.st-key-tick-row [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+.st-key-tick-row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0;
+}
+
+
+/* ---------------------------------------------------- download buttons -- */
+/* Three across when there's room, otherwise they stack. The buttons fill
+   their column so they line up neatly when stacked */
+.st-key-downloads [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap;
+}
+.st-key-downloads [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+.st-key-downloads [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    flex: 1 1 240px !important;
+    min-width: 240px;
+}
+.st-key-downloads button {
+    width: 100%;
+}
+
+
+/* ----------------------------------------------------------- phones -- */
+@media (max-width: 640px) {
+    /* Less empty space round the edges of the page */
+    .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+    /* Sticker columns can go full width on a phone */
+    .st-key-sticker-grid [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    .st-key-sticker-grid [data-testid="stHorizontalBlock"] > [data-testid="column"],
+    .st-key-downloads [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    .st-key-downloads [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        min-width: 100%;
+    }
+    /* Smaller confetti-style stat cards so 2 fit on a row */
+    .stat {
+        flex: 1 1 40%;
+    }
+}

@@ -6,6 +6,7 @@ app.py - the interface.
     in time order on a "cutting mat" -> download them all as transparent PNGs.
 
 Styling: colours live in .streamlit/config.toml, everything else in CSS below.
+NEW: styles/responsive.css makes the page fit smaller windows and phones.
 """
 
 import base64
@@ -25,7 +26,11 @@ from stickers import DUPLICATE_OVERLAP, extract_stickers, make_gif
 st.set_page_config(page_title="Motion Stickers!", page_icon="✂️", layout="wide")
 
 # Load the page styling from styles/style.css
-css = (Path(__file__).parent / "styles" / "style.css").read_text(encoding="utf-8")
+# NEW: then styles/responsive.css, which is loaded second so its rules for
+# smaller screens win over the normal ones
+styles = Path(__file__).parent / "styles"
+css = (styles / "style.css").read_text(encoding="utf-8")
+css += "\n" + (styles / "responsive.css").read_text(encoding="utf-8")
 st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
@@ -334,7 +339,11 @@ def render_footer():
 # the left-hand column, so there's no big gap under the title
 # CHANGED: [6, 5] gives the left column a little more room, so all three
 # steps fit on one row
-col_left, col_right = st.columns([6, 5], gap="large", vertical_alignment="center")
+# NEW: the columns go in a container with a key. Streamlit gives it the CSS
+# class .st-key-top-layout, which responsive.css uses to put the previews
+# under the title when the window is narrow
+with st.container(key="top-layout"):
+    col_left, col_right = st.columns([6, 5], gap="large", vertical_alignment="center")
 with col_left:
     st.title("Motion Stickers!")
     # CHANGED: the steps go in a slot, so they can be updated while the
@@ -357,7 +366,9 @@ with col_left:
 # The clip gets the bigger share, the stop-motion preview the smaller
 # vertical_alignment="bottom" lines up the bottoms of the two previews, so
 # the "Your clip" and "Stop-motion preview" badges sit at the same height
-col_clip, col_gif = col_right.columns([3, 2], gap="medium", vertical_alignment="bottom")
+# NEW: in a keyed container too (.st-key-previews in responsive.css)
+with col_right.container(key="previews"):
+    col_clip, col_gif = st.columns([3, 2], gap="medium", vertical_alignment="bottom")
 
 # The GIF isn't made until further down the script, so keep an empty slot
 # here and fill it in once the GIF exists. Until then, show the placeholder
@@ -388,7 +399,9 @@ else:
         # deep shadow, a yellow dashed "cut here" line around it, and a
         # slight tilt. It lifts and straightens on hover like the stickers.
         # Comes with a yellow "Your clip" label to match "Stop-motion preview"
-        st.markdown('<style>video{max-height:320px; width:auto !important; '
+        # CHANGED: max-height is now 320px or 45% of the window height,
+        # whichever is smaller, so it fits on short screens too
+        st.markdown('<style>video{max-height:min(320px, 45vh); width:auto !important; '
                     'max-width:100%; display:block; margin:12px auto 0; '
                     'background:#000; border-radius:14px; '
                     'box-shadow:0 14px 28px rgba(0,0,0,0.45); '
@@ -529,8 +542,11 @@ if stickers:
     # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter.
     # CHANGED: narrow columns with a small gap keep the buttons side by side,
     # and the counter is a yellow pill to match the other badges
-    col_all, col_none, col_count, _ = st.columns([1, 1, 2, 4], gap="small",
-                                                  vertical_alignment="center")
+    # NEW: keyed container (.st-key-tick-row) so the buttons only take the
+    # width they need and wrap on small screens
+    with st.container(key="tick-row"):
+        col_all, col_none, col_count, _ = st.columns([1, 1, 2, 4], gap="small",
+                                                      vertical_alignment="center")
     col_all.button("Tick all", on_click=set_all, args=(keys, True))
     col_none.button("Untick all", on_click=set_all, args=(keys, False))
     col_count.markdown(
@@ -540,8 +556,11 @@ if stickers:
         unsafe_allow_html=True)
 
     # NEW: the sticker grid, 4 per row, each sticker with its checkbox underneath
+    # CHANGED: in a keyed container (.st-key-sticker-grid), so on smaller
+    # screens each row of 4 wraps to 2 + 2, or 1 per line on a phone
+    grid = st.container(key="sticker-grid")
     for row_start in range(0, len(stickers), 4):
-        cols = st.columns(4)
+        cols = grid.columns(4)
         for col, i in zip(cols, range(row_start, min(row_start + 4, len(stickers)))):
             t, sticker = stickers[i]
             with col:
@@ -573,7 +592,9 @@ if stickers:
             zf.writestr(f"sticker_{i:03d}_{t:.1f}s.png", png.tobytes())
 
     # CHANGED: three download buttons now, with the printable sheet in the middle
-    col_zip, col_sheet, col_gif = st.columns(3)
+    # NEW: keyed container (.st-key-downloads) so they stack on small screens
+    with st.container(key="downloads"):
+        col_zip, col_sheet, col_gif = st.columns(3)
     with col_zip:
         st.download_button("Download all stickers (.zip)", zip_buffer.getvalue(),
                            file_name="stickers.zip", mime="application/zip")
