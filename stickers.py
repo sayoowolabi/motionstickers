@@ -5,6 +5,8 @@ The interface (app.py) only calls extract_stickers(). Everything that turns a
 video into sticker cutouts lives here, so this file can be developed, tested
 and submitted independently of the interface.
 
+References: numbers in [ ] refer to the References list in README.md.
+
 CURRENT STATE: steps 1-2 (Sayo), 3-4 (Pati) and 5-6 (Chloe) are in.
 Step 2 now uses a running-average background instead of comparing
 with the previous frame, to reduce ghosting.
@@ -25,7 +27,7 @@ Week 10 changes (Pati, steps 1 and 3):
   - Night clips get gamma correction before CLAHE (NIGHT_GAMMA), so the
     dark areas have detail for CLAHE to work with. Uses Sayo's clip-wide
     night decision, so it doesn't flicker either.
-  - Shadow elimination using an HSV mask (Cucchiara et al., 2003) applied to a
+  - Shadow elimination using an HSV mask (Cucchiara et al. [8]) applied to a
     coloured copy of the background to eliminate pixels that have gotten
     darker but not a different colour. (Week 11: now only applies to colour
     video, see below.)
@@ -41,7 +43,7 @@ Week 11 changes (Chloe, from the final evaluation):
   - clean_mask() drops shapes smaller than RELATIVE_MIN_SIZE of the biggest
     one, so leftover blobs don't appear as floating pieces in stickers.
   - drop_ghosts(): shapes that don't change between frames are dropped when
-    another shape is moving (Cucchiara et al., 2003).
+    another shape is moving (Cucchiara et al. [8]).
   - Stickers covering more than MAX_OBJECT_FRAC of the frame are skipped
     (the whole scene changed, e.g. the camera adjusting its exposure).
 
@@ -84,22 +86,22 @@ BACKGROUND_ALPHA = 0.01
 
 # Selective update: pixels marked as moving are still blended in, but this
 # many times slower (0.1 x 0.01 = 0.001, roughly the last 1000 frames).
-# The selective update in Piccardi (2004, Section 2.1, eq. 3, from Koller
-# et al., 1994) doesn't update moving pixels at all. We use a slow rate
+# The selective update in Piccardi [3] (Section 2.1, eq. 3, from Koller
+# et al. [6]) doesn't update moving pixels at all. We use a slow rate
 # instead because, with no update, anything moved and left there (a door
 # left open, a light switched on, someone in frame 1 who walks away) would
-# be flagged as motion forever: a permanent ghost (Cucchiara et al., 2003).
+# be flagged as motion forever: a permanent ghost (Cucchiara et al. [8]).
 MOVING_ALPHA_FACTOR = 0.1
 
 # Frames below this mean brightness count as night footage and get gamma
 # correction + CLAHE (decided once per clip, see estimate_background()).
 NIGHT_BRIGHTNESS = 70
 
-# Night handling (step 1, Pati): gamma < 1 brightens dark areas more than
+# Night handling (step 1, Pati) [1], [2]: gamma < 1 brightens dark areas more than
 # light ones, so CLAHE has some detail to work with.
 NIGHT_GAMMA = 0.6
 
-# Shadow removal (step 3, Pati), HSV test against the colour background.
+# Shadow removal (step 3, Pati), HSV test against the colour background [8].
 # A pixel counts as shadow if it is darker than the background by a
 # "shadow-like" amount (between SHADOW_DARKEST and SHADOW_LIGHTEST of the
 # background's brightness) while keeping roughly the same colour.
@@ -135,7 +137,7 @@ MIN_OBJECT_PIXELS = 50       # never go below this, even on tiny frames
 # sometimes drop the dog).
 RELATIVE_MIN_SIZE = 0.3
 
-# Ghost check (Cucchiara et al., 2003): a ghost is a patch where the
+# Ghost check (Cucchiara et al. [8]): a ghost is a patch where the
 # background is out of date, so nothing in it changes from frame to frame;
 # a real object does. Each shape is compared with the frame GHOST_GAP frames
 # earlier: if under GHOST_MIN_MOVING of its pixels changed by more than
@@ -183,7 +185,7 @@ def drop_ghosts(cleaned, change):
         changed = cv2.countNonZero(cv2.bitwise_and(shape, change))
         (moving if changed >= GHOST_MIN_MOVING * area else still).append(c)
 
-    #Nothing moving (someone standing still) or nothing still: keep it all
+    # Nothing moving (someone standing still) or nothing still: keep it all
     if not moving or not still:
         return cleaned
     kept = np.zeros_like(cleaned)
@@ -281,7 +283,7 @@ def brightness(frame):
 
 def gamma_correct(gray, gamma=None):
     """
-    Brighten a dark image with gamma correction.
+    Brighten a dark image with gamma correction [1].
 
     Each pixel becomes 255 * (pixel / 255) ** gamma. With gamma < 1 the
     dark values are lifted a lot and the bright values only a little, so
@@ -334,7 +336,7 @@ def preprocess_frame(frame, use_clahe=None):
 def night_contrast(gray):
     """
     Night enhancement on a greyscale frame: gamma correction first, so the
-    dark areas have some detail, then CLAHE to boost the local contrast.
+    dark areas have some detail, then CLAHE to boost the local contrast [2].
     Used by both preprocess_frame() and estimate_background(), so the
     frames and the background are always enhanced the same way.
     """
@@ -353,11 +355,11 @@ def estimate_background(video_path, samples=BACKGROUND_SAMPLES,
     covers a given pixel in a few of those frames, so the median picks the
     empty scene, even if they are already there in frame 1. This replaces
     starting from the first frame, which baked anyone in it into the
-    background as a ghost (Cucchiara et al., 2003). Unlike a warm-up
+    background as a ghost (Cucchiara et al. [8]). Unlike a warm-up
     period, no frames are skipped, so motion at the very start of a short
-    clip still makes stickers. Median background: Piccardi (2004), Section
+    clip still makes stickers. Median background: Piccardi [3], Section
     2.2 (temporal median filter, which works even on sub-sampled frames);
-    taking the median of ~25 frames spread over the clip: LearnOpenCV (2019).
+    taking the median of ~25 frames spread over the clip: LearnOpenCV [5].
     It only works if each pixel shows the empty scene in at least half of
     the samples.
 
@@ -456,6 +458,7 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None
     Updated background model (float32)
 
     New background = (1 - alpha) * old background + alpha * current frame
+    (a running average, computed with cv2.accumulateWeighted [4])
 
     This function should be called on EVERY frame (not just to create stickers)
     to ensure the model accurately represents the scene.
@@ -466,7 +469,7 @@ def update_background(gray, background, alpha=BACKGROUND_ALPHA, motion_mask=None
     part of the background, causing their mask to change to show they are no longer
     in the frame. When they move away, because there will still be a copy of them in
     the background, it will appear to follow them (create a trail). Selective update
-    based on Koller et al. (1994), outlined in Piccardi (2004), Section 2.1.
+    based on Koller et al. [6], outlined in Piccardi [3], Section 2.1.
     """
     #On the first frame there is no background yet, so the frame itself
     #becomes the starting background. accumulateWeighted needs a float
@@ -522,14 +525,14 @@ def shadow_mask(frame, background):
     """
     Step 3 (Pati): find pixels that changed only because of a shadow.
 
-    Uses the HSV test from Cucchiara et al. (2003). A shadow makes a
+    Uses the HSV test from Cucchiara et al. [8]. A shadow makes a
     surface darker but doesn't change its colour much, so in HSV the
     brightness (V) drops by a limited amount while hue (H) and
     saturation (S) stay about the same. A real object covering the
     surface usually changes the colour as well.
 
     The frame is compared with the colour background model (what the
-    surface looks like with nothing on it), as in Cucchiara et al. With a
+    surface looks like with nothing on it), as in Cucchiara et al. [8]. With a
     background there is only one direction to check: a shadow makes the
     frame darker than the background. (The earlier version compared with
     the previous frame, which only caught the edges of a shadow, so it
@@ -589,12 +592,12 @@ def clean_mask(mask, min_area=None, frame=None, background=None):
     the edges that moved). This takes the shadows out, removes the specks,
     joins the outline up and fills it in.
 
-    More than just the largest shape is retained; 
-    all shapes larger than the minimum size are retained. 
-    If a person and their dog are both present, both are both retained as long as 
-    each is RELATIVE_MIN_SIZE (30%) of the largest shape. Garbage such as glare, ghost patches, etc. 
-    are discarded if they are smaller than the minimum size.
-    Shapes end up in the same sticker because each sticker is cut from the full mask.
+    More than just the largest shape is kept: every shape above the
+    minimum size is kept, as long as it is at least RELATIVE_MIN_SIZE (30%)
+    of the largest shape. So if a person and their dog are both in frame,
+    both are kept, while small leftovers such as glare or ghost patches are
+    discarded. The shapes end up in the same sticker because each sticker
+    is cut from the full mask.
 
     Parameters:
         mask:       black/white motion mask from create_motion_mask()
@@ -615,12 +618,12 @@ def clean_mask(mask, min_area=None, frame=None, background=None):
         shadows = shadow_mask(frame, background)
         mask = cv2.bitwise_and(mask, cv2.bitwise_not(shadows))
 
-    #Opening = erode then dilate. A small kernel deletes specks of noise
+    #Opening [7] = erode then dilate. A small kernel deletes specks of noise
     #but leaves the bigger object shape alone
     small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, small)
 
-    #Closing = dilate then erode. A big kernel bridges the gaps in the
+    #Closing [7] = dilate then erode. A big kernel bridges the gaps in the
     #broken outline so it becomes one connected shape
     big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
     closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, big)
@@ -669,7 +672,7 @@ def enhance_object(frame):
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
-    #CLAHE boosts contrast in small tiles, so dark areas get brighter
+    #CLAHE [2] boosts contrast in small tiles, so dark areas get brighter
     #without blowing out areas that are already bright
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     l = clahe.apply(l)
@@ -779,7 +782,7 @@ def make_gif(stickers, frame_ms=400):
     Every GIF frame must be the same size, but each sticker has a
     different size, so each one is centred on a transparent canvas as big
     as the largest sticker. GIF saving options (save_all, loop,
-    disposal): Pillow documentation, "Image file formats: GIF".
+    disposal): Pillow documentation [9].
 
     Parameters:
         stickers: list of (time_in_seconds, BGRA sticker) from extract_stickers
@@ -821,7 +824,7 @@ def make_gif(stickers, frame_ms=400):
 
 def mask_overlap(mask_a, mask_b):
     """
-    How much two masks overlap, as intersection over union (IoU):
+    How much two masks overlap, as intersection over union (IoU) [15]:
     the area both cover, divided by the area either covers.
     1 = the same shape in the same place, 0 = no overlap at all.
 

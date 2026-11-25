@@ -170,6 +170,70 @@ Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked f
 - [x] Choosing stickers before download, printable sheet and responsive layout
 The detection code in `stickers.py` hasn't changed since the final evaluation, so the results above match the code.
  
+## AI use
+We declare that AI (ChatGPT) was used to assist with parts of this project.
+It was used in the sections of the code marked with an `AI USE` comment:
+the responsive layout, the click-to-enlarge view, the printable sticker
+sheet, the Streamlit state handling and the night brightness tuning. All
+AI-assisted code was reviewed and tested by the team.
+
+The following prompts were used:
+
+### Prompts
+**Responsive CSS**
+- Our sidebar is ~350px, so our media query triggers too late. Is there a way to respond to a container's width instead of the window's?
+- Our container query also stacks a nested pair of columns. How can selector specificity make the nested rule win, without more `!important`?
+- Can a pop-up open and close without any JavaScript, using only HTML and CSS?
+
+**Printable sticker sheet**
+- Pasting BGRA stickers with soft edges onto a BGR page gives black halos. What's the correct blending formula, and what is it called?
+- Our dilated cut line gets clipped at the image edge. How should we pad the mask and fix the contour position?
+- Which OpenCV interpolation method is best for shrinking images, and why?
+
+**Streamlit state**
+- Streamlit re-runs our script on every click, so our stickers disappear. Why does this happen, and how can we keep them?
+- How can we draw a placeholder at the top of the page and fill it in once the results exist further down?
+
+**tune_night.py**
+- How can our tuning script reuse the pipeline's functions so the two never drift out of sync?
+- How can we collect three different sets of frames in one pass, without decoding every frame of a 4K video?
+
+**GrabCut comparison**
+- How can we use our motion mask as the starting guess for GrabCut instead of drawing a rectangle by hand?
+- GrabCut needs four labels, not a black-and-white mask. How should we decide which pixels are definite object and which are only probable?
+- GrabCut is slow on full frames. How can we run it on just the area around the object and put the result back?
+
+**Ground-truth marking tool**
+- Our 4K frames don't fit on screen. How can we show them shrunk but still save the traced mask at full size?
+- How can an OpenCV mouse callback add points to a list that the main drawing loop is also using?
+- Why might jumping to a frame with `cap.set()` give the wrong frame, and how can we make sure our frame numbers match `evaluate.py`?
+
+**Motion detection**
+- Why does a running-average background leave a trail behind slow-moving objects, and how does the learning rate affect it?
+- Starting the background from the first frame bakes in anyone already there. Why does a median of frames spread across the clip fix this?
+- With selective update, moving pixels are never learned. What problem does that cause if something is moved and left there?
+- How can we tell a "ghost" left in the background apart from a real object that's standing still?
+
+**Shadows and night footage**
+- Why does a shadow change brightness but not hue or saturation, and how can we use that to remove shadows?
+- Why does HSV shadow removal fail on infrared footage, and how could we detect whether a clip has colour?
+- Why should gamma correction come before CLAHE on dark footage, not after?
+- What's the difference between histogram equalisation and CLAHE, and why does the clip limit matter for noisy CCTV?
+- How can we stop night enhancement flickering on and off in clips whose brightness sits near the threshold?
+
+**Mask cleanup and stickers**
+- Why use opening before closing when cleaning a motion mask, and how should the kernel sizes differ?
+- A fixed minimum object size deletes small objects on low-res video but misses noise on 4K. How can we make it resolution-independent?
+- How can we keep a dog next to its owner as a second object, but still drop small leftover blobs?
+- Why does an unsharp mask sharpen edges, and why apply CLAHE only to the L channel in LAB?
+- How can we skip near-duplicate stickers of an object standing still, without missing slow movement?
+
+**Evaluation**
+- Why is IoU a better measure than pixel accuracy for comparing our masks to hand-marked ground truth?
+- Our worst IoU scores are on torch-lit and handheld clips. Which assumptions of background subtraction do these break?
+- How does GrabCut differ from background subtraction, and why might it suit a cut-out app better or worse?
+- Check these comments for technical accuracy only, not style.
+
 ## References
 References use IEEE style and are numbered in the order they are first cited.
  
@@ -236,3 +300,7 @@ References use IEEE style and are numbered in the order they are first cited.
 [31] Google Fonts, "Fredoka," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Fredoka (accessed Nov. 2026).
  
 [32] Google Fonts, "Figtree," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Figtree (accessed Nov. 2026).
+
+[33] T. Porter and T. Duff, "Compositing digital images," *ACM SIGGRAPH Comput. Graph.*, vol. 18, no. 3, pp. 253–259, Jul. 1984.
+
+[34] S. Suzuki and K. Abe, "Topological structural analysis of digitized binary images by border following," *Comput. Vis. Graph. Image Process.*, vol. 30, no. 1, pp. 32–46, Apr. 1985.

@@ -131,6 +131,13 @@ def cutout_feathered(frame, mask):
     b, g, r = cv2.split(frame)
     return cv2.merge([b, g, r, cv2.GaussianBlur(mask, (15, 15), 0)])
 
+# AI USE: AI assistance (ChatGPT) was used for this function because:
+# 1. GrabCut needs a four-label mask, so the motion mask is converted:
+#    the eroded centre is definite object, the rest is probable object,
+#    and everything outside is probable background.
+# 2. GrabCut is slow, so it only runs on a cropped box around the object
+#    and the result is put back into a full-size mask.
+# Reviewed and tested by the team.
 
 def cutout_grabcut(frame, mask):
     """

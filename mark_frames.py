@@ -42,6 +42,13 @@ def pick_frame_indexes(total, count, skip_start):
     start = min(skip_start, total - 1)
     return np.linspace(start, total - 1, count).astype(int).tolist()
 
+# AI USE: AI assistance (ChatGPT) was used for this function because:
+# 1. Large frames are shown shrunk to fit the screen, so clicks are scaled
+#    up to full size for the saved mask, and scaled back down to draw them.
+# 2. Clicks arrive through a mouse callback that updates the same list
+#    of shapes the main loop draws from.
+# Reviewed and tested by the team.
+
 
 def mark_one_frame(frame, window, max_width=1280, max_height=720):
     """Let the user trace polygons on one frame. Returns the mask, or None

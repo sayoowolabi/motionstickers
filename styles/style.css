@@ -409,6 +409,7 @@ details.zoom > summary:focus {
     margin-bottom: 34px;
 }
 .cut-line::before,
+
 .cut-line::after {
     content: "";
     border-top: 2px dashed rgba(245, 197, 66, 0.55);
