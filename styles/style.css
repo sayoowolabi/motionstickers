@@ -1,3 +1,4 @@
+/* Fonts: Fredoka and Figtree from Google Fonts (see README references) */
 @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Figtree:wght@400;600&display=swap');
 
 /* Page background: a craft cutting mat - dark green with a fine and a bold grid */
@@ -143,7 +144,7 @@ details.zoom > summary:focus {
     to   { opacity: 1; transform: scale(1); }
 }
 
-/* ---- NEW: less empty space above the title -----------------------------
+/* ---- Less empty space above the title -----------------------------
    Streamlit leaves a big gap at the top of the page by default. Both
    selectors are here because different Streamlit versions use different
    names for the main page container. */
@@ -152,7 +153,7 @@ details.zoom > summary:focus {
     padding-top: 2rem !important;
 }
 
-/* ---- NEW: stats panel ("stat stickers") ---------------------------------
+/* ---- Stats panel ("stat stickers") ---------------------------------
    A row of yellow cards under the sticker heading, e.g. "12 stickers found" */
 .stats {
     display: flex;
@@ -251,7 +252,7 @@ details.zoom > summary:focus {
     white-space: nowrap;
 }
 
-/* ---- NEW: washi tape on the preview boxes --------------------------------
+/* ---- Washi tape on the preview boxes --------------------------------
    A strip of see-through yellow tape across one top corner, as if the box
    is taped to the cutting mat. The dotted ends look like torn tape edges. */
 .tape {
@@ -274,7 +275,7 @@ details.zoom > summary:focus {
     transform: rotate(8deg);
 }
 
-/* ---- NEW: "what you'll get" example stickers -----------------------------
+/* ---- "What you'll get" example stickers -----------------------------
    Faded stickers shown before any real ones are made. */
 .examples {
     margin-top: 28px;
@@ -393,7 +394,7 @@ details.zoom > summary:focus {
     display: block;
 }
 
-/* ---- NEW: footer --------------------------------------------------------- */
+/* ---- Footer --------------------------------------------------------- */
 .footer {
     margin-top: 18vh;                    /* pushes it well down the page */
     padding-bottom: 30px;

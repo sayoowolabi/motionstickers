@@ -14,10 +14,15 @@ long each method takes, so the blog can show both what each method looks
 like and what it costs.
 
 Comparisons:
-  1. Motion mask:  frame differencing (current)  vs  running-average background
-  2. Mask cleanup: raw mask  vs  largest contour filled  vs  convex hull filled
+  1. Motion mask:  frame differencing (the original method)  vs
+                   running-average background (what the app uses)
+  2. Mask cleanup: raw mask  vs  clean_mask() (every shape filled, as in
+                   the app)  vs  convex hull of the largest shape
   3. Cutout:       alpha channel  vs  bitwise_and  vs  feathered alpha  vs  GrabCut
   4. Outline:      dilation ring  vs  drawContours line
+
+GrabCut: Rother, Kolmogorov and Blake (2004), via the OpenCV GrabCut
+tutorial (see README references).
 """
 
 import argparse
@@ -27,8 +32,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from stickers import (preprocess_frame, create_motion_mask, clean_mask,
-                      update_background, background_motion_mask)
+from stickers import (BACKGROUND_ALPHA, preprocess_frame, create_motion_mask,
+                      clean_mask, update_background, background_motion_mask)
 
 OUT = Path("output/compare")
 
@@ -80,12 +85,12 @@ def crop_box(mask, pad=16):
 
 # -------------------------------------------- 1. motion mask alternatives --
 def mask_frame_difference(frames, i, gap):
-    """Current method: compare with the frame `gap` frames earlier."""
+    """Original method: compare with the frame `gap` frames earlier."""
     return create_motion_mask(preprocess_frame(frames[i]),
                               preprocess_frame(frames[i - gap]))
 
 
-def mask_running_average(frames, i, alpha=0.05):
+def mask_running_average(frames, i, alpha=BACKGROUND_ALPHA):
     """Compare with a slowly-updated average of all earlier frames.
     Uses the same update_background() / background_motion_mask() as the
     app (stickers.py), so the blog images match what the app does."""
@@ -222,8 +227,9 @@ def main():
     ap.add_argument("video", nargs="?", help="video to test on")
     ap.add_argument("--frame", type=int, default=None, help="frame number to compare")
     ap.add_argument("--gap", type=int, default=15, help="frames between compared frames")
-    ap.add_argument("--alpha", type=float, default=0.05,
-                    help="running-average learning rate (try 0.005-0.2)")
+    ap.add_argument("--alpha", type=float, default=BACKGROUND_ALPHA,
+                    help="running-average learning rate (default: the app's "
+                         "BACKGROUND_ALPHA; try 0.005-0.2)")
     ap.add_argument("--make-test", action="store_true", help="create a test video")
     args = ap.parse_args()
 
@@ -255,14 +261,14 @@ def main():
     cv2.imwrite(str(OUT / "1_motion.png"), panel(
         [frame, diff, avg], ["Original frame", "Frame difference", f"Running average ({args.alpha})"]))
 
-    # 2. Mask cleanup (from the current frame-difference mask)
+    # 2. Mask cleanup (from the frame-difference mask)
     largest, t3 = timed(clean_mask, diff)
     hull, t4 = timed(clean_convex_hull, diff)
     if largest is None:
         raise SystemExit("No moving object found at this frame - try another --frame.")
     times += [("Clean: largest contour", t3), ("Clean: convex hull", t4)]
     cv2.imwrite(str(OUT / "2_cleanup.png"), panel(
-        [diff, largest, hull], ["Raw mask", "Largest contour", "Convex hull"]))
+        [diff, largest, hull], ["Raw mask", "clean_mask()", "Convex hull"]))
 
     # 3. Cutout (all use the same cleaned mask, cropped to the object)
     x1, y1, x2, y2 = crop_box(largest)
