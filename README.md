@@ -8,7 +8,7 @@ The project uses classical image-processing techniques only (no machine learning
  
 ## Team
 - Patrycja Palka (blog: https://patrycjapalka.wordpress.com/)
-- Folasayo Owolabi (blog: )
+- Folasayo Owolabi (blog: https://learn5093.wordpress.com/)
 - Chloe Vegiga (blog: https://c23444496.wordpress.com/)
 ## How it works
 1. **Preprocessing:** greyscale and Gaussian blur. Night clips also get gamma correction and then CLAHE, to bring out detail in the dark [1], [2]. Whether a clip counts as night is decided once per video, so the enhancement doesn't flicker on and off between frames.
