@@ -5,9 +5,29 @@ app.py - the interface.
     Upload a video -> extract_stickers() from stickers.py -> show the stickers
     in time order on a "cutting mat" -> download them all as transparent PNGs.
 
+What this file does in the project:
+    The image processing itself (background subtraction, shadow removal,
+    night mode, cutting out the moving objects) all happens in stickers.py.
+    This file is the front end around it. It:
+      1. takes the user's video and the settings from the sidebar,
+      2. runs the pipeline and shows its progress,
+      3. lets the user review the results and untick bad stickers
+         (human-in-the-loop, because no automatic pipeline is perfect),
+      4. exports the kept stickers as a zip of transparent PNGs, a printable
+         A4 sticker sheet, and a stop-motion GIF.
+
+    Image processing that does happen in this file:
+      - alpha compositing of each sticker onto the sheet (paste_sticker) [33]
+      - a cut line round each sticker, made with morphological dilation of
+        its mask and then contour tracing (make_sticker_sheet) [5], [34]
+      - area-based resampling when shrinking stickers, which avoids the
+        aliasing (jagged edges) that plain resizing gives [6], [18]
+
 Styling: colours live in .streamlit/config.toml, everything else in
 styles/style.css. styles/responsive.css makes the page fit smaller windows
 and phones.
+
+References: numbers in [ ] refer to the References list in README.md.
 """
 
 import base64
@@ -24,6 +44,7 @@ import streamlit as st
 from pathlib import Path
 from stickers import DUPLICATE_OVERLAP, extract_stickers, make_gif
 
+# Streamlit [8] builds the web page from this script
 st.set_page_config(page_title="Motion Stickers!", page_icon="✂️", layout="wide")
 
 # Load the page styling from styles/style.css, then styles/responsive.css,
@@ -39,6 +60,11 @@ def sticker_figure(sticker, t, i, kept=True):
     """Turn one BGRA sticker into an HTML <figure> for the sticker sheet.
     Unticked stickers get the "unticked" class so the CSS can fade them out.
     Clicking the sticker opens it full size; clicking again closes it."""
+    # Stickers are BGRA: OpenCV's usual blue-green-red order plus an alpha
+    # (transparency) channel, which is 0 wherever the background was cut away.
+    # PNG is used because it's lossless and keeps that alpha channel (JPEG
+    # would lose it). The PNG is then base64-encoded so it can go straight
+    # into the HTML as a data: URL, with no need to save a file anywhere.
     # Full-size copy for the enlarged view, made before shrinking
     ok, big_png = cv2.imencode(".png", sticker)
     big_b64 = base64.b64encode(big_png.tobytes()).decode()
@@ -132,7 +158,7 @@ def progress_with_messages(bar):
     """Wrap the progress bar so it shows a fun message as well as the
     progress. extract_stickers() calls this with the fraction done (0 to 1),
     exactly like it called bar.progress before."""
-    start = time.monotonic()
+    start = time.monotonic()     # monotonic clock never jumps backwards [7]
 
     def update(fraction, *args, **kwargs):
         step = int((time.monotonic() - start) / MESSAGE_SECONDS)
@@ -235,7 +261,7 @@ def timeline_html(stickers, kept_flags, video_seconds):
 # OpenCV: alpha-blends each sticker onto a cream "cutting mat" background and
 # draws a grey cut line around it, found by growing the sticker's mask
 # (dilation) and tracing its outline (contours)
-SHEET_W, SHEET_H = 1240, 1754           # A4 at 150 dpi, in pixels
+SHEET_W, SHEET_H = 1240, 1754           # A4 at 150 dpi, in pixels (8.27 x 11.69 in x 150)
 SHEET_MARGIN = 80
 SHEET_TOP = 210                         # room for the title
 SHEET_BG = (225, 240, 245)              # cream, in BGR (#f5f0e1)
@@ -246,8 +272,16 @@ CUT_LINE = (160, 160, 160)              # grey cut line
 
 def paste_sticker(page, sticker, x, y):
     """Alpha-blend a BGRA sticker onto the BGR page with its top-left at (x, y):
-    result = alpha * sticker + (1 - alpha) * page."""
+    result = alpha * sticker + (1 - alpha) * page.
+
+    This is the "over" operator from Porter and Duff [33]. Where alpha is 1
+    the sticker fully covers the page, where it's 0 the page shows through,
+    and values in between (soft edges) mix the two, so the edges don't look
+    jagged."""
     h, w = sticker.shape[:2]
+    # Scale alpha from 0-255 to 0-1. Slicing 3:4 (not just 3) keeps it as an
+    # (h, w, 1) array, so NumPy broadcasting applies it to all three colour
+    # channels at once with no loop
     alpha = sticker[:, :, 3:4].astype(float) / 255.0
     region = page[y:y + h, x:x + w].astype(float)
     blended = alpha * sticker[:, :, :3] + (1 - alpha) * region
@@ -262,7 +296,7 @@ def make_sticker_sheet(keep):
     for gy in range(0, SHEET_H, 50):
         cv2.line(page, (0, gy), (SHEET_W, gy), SHEET_GRID, 1)
 
-    # Title and a short instruction
+    # Title and a short instruction, drawn with cv2.putText [19]
     cv2.putText(page, "Motion Stickers!", (SHEET_MARGIN, 120),
                 cv2.FONT_HERSHEY_DUPLEX, 2.4, SHEET_TEXT, 4, cv2.LINE_AA)
     cv2.putText(page, f"{len(keep)} stickers - cut along the grey lines",
@@ -283,6 +317,10 @@ def make_sticker_sheet(keep):
         h, w = sticker.shape[:2]
         scale = min((cell_w - 2 * pad) / w, (cell_h - 2 * pad - label_h) / h)
         new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        # INTER_AREA averages every source pixel that falls inside each new
+        # pixel, which is the recommended method for shrinking: it avoids
+        # the aliasing (jagged edges, moire) of nearest-neighbour or bilinear
+        # [6], [18]
         small = cv2.resize(sticker, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
         # Centre it in the cell
@@ -291,10 +329,23 @@ def make_sticker_sheet(keep):
 
         # Cut line: grow the sticker's mask a little so the line sits just
         # outside it, then draw the outline of the grown mask
+        # Binary mask from the alpha channel: 255 where the sticker is, 0 elsewhere
         mask = (small[:, :, 3] > 0).astype(np.uint8) * 255
+        # Pad with 10 px of empty border first, so the dilation has room to
+        # grow outwards and the outline isn't clipped at the image edge
         mask = cv2.copyMakeBorder(mask, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+        # Morphological dilation [5]: a pixel becomes white if any pixel under
+        # the 15x15 elliptical kernel is white, so the shape grows evenly
+        # outwards by about 7 px. The ellipse (not a square) keeps the
+        # corners of the cut line rounded, like a real die-cut sticker
         grown = cv2.dilate(mask, kernel)
+        # findContours traces the boundary of the white region using the
+        # border-following algorithm of Suzuki and Abe [34]. RETR_EXTERNAL keeps
+        # only the outer outline (no holes inside), and CHAIN_APPROX_SIMPLE
+        # stores straight runs as their end points to save memory
         contours, _ = cv2.findContours(grown, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # The contour is in the padded mask's coordinates, so offset it back
+        # by the 10 px padding to line it up with the sticker on the page
         cv2.drawContours(page, contours, -1, CUT_LINE, 2, cv2.LINE_AA,
                          offset=(x - 10, y - 10))
 
@@ -443,6 +494,8 @@ with st.sidebar:
 
 if make:                                  # the button itself is drawn at the top
     # OpenCV needs a real file path, so save the upload to a temp file.
+    # (Streamlit only holds the upload in memory, and cv2.VideoCapture can't
+    # read from memory)
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp.write(uploaded.getvalue())   # getvalue(), as the preview reads it too
         video_path = tmp.name
@@ -450,7 +503,7 @@ if make:                                  # the button itself is drawn at the to
     # Step 2 pulses while the video is processed
     steps_slot.markdown(steps_html(2, working=True), unsafe_allow_html=True)
     bar = st.progress(0.0, text=LOADING_MESSAGES[0])
-    started = time.perf_counter()        # Time the run for the stats panel
+    started = time.perf_counter()        # Time the run for the stats panel [7]
     try:
         # progress_with_messages(bar) rather than bar.progress, so the
         # bar shows the fun loading messages
@@ -458,6 +511,9 @@ if make:                                  # the button itself is drawn at the to
                                     overlap,
                                     night=AUTO_ON_OFF[night_choice],
                                     shadows=AUTO_ON_OFF[shadow_choice])
+    # extract_stickers raises ValueError when OpenCV can't open or decode
+    # the video (e.g. an unsupported codec), so show a friendly message
+    # instead of a crash
     except ValueError as err:
         st.session_state.stickers = []   # Clear old stickers so they don't show under the error
         st.session_state.stats = None    # and the old stats
@@ -604,7 +660,7 @@ if stickers:
         st.download_button("Download printable sheet (.png)", make_sticker_sheet(keep),
                            file_name="sticker_sheet.png", mime="image/png")
     with col_gif:
-        gif = make_gif(keep)                               # Only the ticked stickers
+        gif = make_gif(keep)                               # Only the ticked stickers [30]
         if gif:
             st.download_button("Download stop-motion (.gif)", gif,
                                file_name="stickers.gif", mime="image/gif")
