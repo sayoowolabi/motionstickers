@@ -8,7 +8,7 @@ The project uses classical image-processing techniques only (no machine learning
  
 ## Team
 - Patrycja Palka (blog: https://patrycjapalka.wordpress.com/)
-- Folasayo Owolabi (blog: )
+- Folasayo Owolabi (blog: https://learn5093.wordpress.com/)
 - Chloe Vegiga (blog: https://c23444496.wordpress.com/)
 ## How it works
 1. **Preprocessing:** greyscale and Gaussian blur. Night clips also get gamma correction and then CLAHE, to bring out detail in the dark [1], [2]. Whether a clip counts as night is decided once per video, so the enhancement doesn't flicker on and off between frames.
@@ -300,7 +300,10 @@ References use IEEE style and are numbered in the order they are first cited.
 [31] Google Fonts, "Fredoka," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Fredoka (accessed Nov. 2026).
  
 [32] Google Fonts, "Figtree," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Figtree (accessed Nov. 2026).
+<<<<<<< HEAD
 
 [33] T. Porter and T. Duff, "Compositing digital images," *ACM SIGGRAPH Comput. Graph.*, vol. 18, no. 3, pp. 253–259, Jul. 1984.
 
 [34] S. Suzuki and K. Abe, "Topological structural analysis of digitized binary images by border following," *Comput. Vis. Graph. Image Process.*, vol. 30, no. 1, pp. 32–46, Apr. 1985.
+=======
+>>>>>>> b643ba6b21a72533fa6d5f6d4477bc2bd3634a52
