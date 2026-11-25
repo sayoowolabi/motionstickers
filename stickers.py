@@ -78,7 +78,8 @@ import numpy as np
 # above let the moving object blend into the background and leave a trail
 # behind it (mean IoU 0.56-0.64). 0.01 adapts twice as fast as 0.005
 # (~100 frames, about 4 s at 25 fps), so it was preferred.
-# Re-check this on real footage once it has been hand-marked.
+# The sweep was repeated on the hand-marked real clips (evaluation/alphas,
+# not in the repo) and 0.01 was kept.
 BACKGROUND_ALPHA = 0.01
 
 # Selective update: pixels marked as moving are still blended in, but this
@@ -206,44 +207,37 @@ def make_sticker(frame, motion_mask, return_mask=False,
                            no background yet
         colour_background: the colour (BGR) background model, used to
                            remove shadows (step 3). None = no shadow removal
-        shadows:           If False shadows are stripped (useful for
-                           black-and-white or infrared where there is no
-                           colour to test using the HSV method (see has_colour())
+        shadows:           False = leave shadows in, even if a colour
+                           background is given. Used for black-and-white
+                           or infrared footage, where there is no colour
+                           for the HSV test to use (see has_colour())
         change:            Change since GHOST_GAP frames ago, used for
                            ghost detection. If None this step is skipped.
 
-Development of our system based on previous work:
+    The pipeline, step by step:
 
-    1. Preprocessing - night clip correction (gamma + CLAHE),
-        greyscale, blur and check for clipping in the
-        night clips.
+    1. Preprocessing: greyscale and blur, plus gamma correction and
+       CLAHE on night clips (decided once per clip).
+    2. Motion mask: difference from the running-average background,
+       then a threshold.
+    3. Mask cleanup: remove shadows with the HSV test against the
+       colour background (colour video only), morphological opening
+       and closing, drop shapes below the minimum size or smaller than
+       RELATIVE_MIN_SIZE of the largest one, and fill the rest. Drop
+       still shapes while another shape is moving (ghosts), and skip
+       stickers that cover more than MAX_OBJECT_FRAC of the frame.
+    4. Object enhancement: contrast (CLAHE) and sharpening (unsharp
+       mask).
+    5. Cutout: use the mask as the alpha channel, crop to the bounding
+       box, and add a white outline by dilating the mask.
 
-    2. Motion mask - subtract from a running average background and
-        threshold the result.
-
-    3. Mask treatment - strip shadows using HSV test against the
-        colour background (only for colour video),
-        morphological opening and closing, minimum
-        object size (minimum size and RELATIVE_MIN_SIZE
-        of the largest object), fill the resulting
-        objects. Drop objects which are static whilst
-        another object is in motion (to eliminate ghosts)
-        and reject stickers which occupy more than
-        MAX_OBJECT_FRAC of the image.
-
-    4. Object enhancement - sharpening (unsharp mask) and contrast
-        augmentation (CLAHE).
-    5. Cut it out: use the mask as the alpha channel, crop to the
-         bounding box, add a white outline by dilating the mask.
+    Steps 1 and 2 are done once per frame in extract_stickers(), because
+    the selective background update needs the motion mask on every frame,
+    not just on sticker frames.
     """
-
-    # Steps 1 and 2 (preprocessing and the motion mask) are done once per
-    # frame in extract_stickers(), because the selective background update
-    # needs the motion mask on every frame, not just sticker frames.
-    if motion_mask is None:
-        return (None, None) if return_mask else None
-
     nothing = (None, None) if return_mask else None
+    if motion_mask is None:
+        return nothing
 
     # If the motion is too small, return None. The minimum scales with the
     # frame size (see min_object_area()) instead of a fixed 500 px
@@ -784,7 +778,8 @@ def make_gif(stickers, frame_ms=400):
 
     Every GIF frame must be the same size, but each sticker has a
     different size, so each one is centred on a transparent canvas as big
-    as the largest sticker.
+    as the largest sticker. GIF saving options (save_all, loop,
+    disposal): Pillow documentation, "Image file formats: GIF".
 
     Parameters:
         stickers: list of (time_in_seconds, BGRA sticker) from extract_stickers

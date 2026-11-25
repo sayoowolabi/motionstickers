@@ -13,15 +13,16 @@ The project uses classical image-processing techniques only (no machine learning
 
 
 ## How it's supposed to work
-1. **Preprocessing:** gBlur and greyscale. CLAHE and gamma correction applied only to night clips to enhance details in the dark. Per-video only, so no flicker.
-2. **Motion detection:** compare each frame with a running-average background (`cv2.accumulateWeighted`, updated every frame) to find what changed. The background starts as the median of frames across the clip and is only updated at full speed where nothing is moving (selective update)
-3. **Mask cleanup:** Remove shadows then use morphology to refine the mask (opening for noise removal and closing for gap filling) 
-- **Shadows:** are pixels that have only darkened and not changed colour (HSV method, Cucchiara et al., 2003). Only applied to colour video as there is no colour information in the infrared 
-- **Size filters:** - small objects are rejected as noise (scaled to full video size) and residual clusters smaller than 30% of the largest object are rejected. All other objects are retained so a dog alongside its owner will be retained 
-- **Ghost check:** - stationary objects are rejected if another object is moving 
-- **Whole-scene changes:** - if the “object” covers more than 50% of the video (such as an exposure change by the camera itself) then no sticker is produced
-4. **Cutout:** keep the moving object, make the background transparent, add a white sticker outline (scaled to the object's size, so it shows on 4K footage too)
-5. **Stickers:** skip near-duplicate stickers (an object standing still), then download them as a zip or a stop-motion GIF
+1. **Preprocessing:** greyscale and Gaussian blur. Night clips also get gamma correction and then CLAHE, to bring out detail in the dark [14, 15]. Whether a clip counts as night is decided once per video, so the enhancement doesn't flicker on and off between frames.
+2. **Motion detection:** compare each frame with a running-average background (`cv2.accumulateWeighted`, updated every frame) to find what changed [3, 4]. The background starts as the median of frames spread across the clip [3, 24], and is only updated at full speed where nothing is moving (selective update [3, 23]).
+3. **Mask cleanup:** remove shadows, then use morphology to refine the mask (opening to remove noise, closing to fill gaps) [5].
+   - **Shadows:** pixels that have only darkened and not changed colour (HSV method, Cucchiara et al., 2003 [1]). Only applied to colour video, as infrared has no colour information.
+   - **Size filters:** small shapes are rejected as noise (the minimum scales with the video size), and leftover shapes smaller than 30% of the largest object are rejected. All other objects are kept, so a dog alongside its owner is kept.
+   - **Ghost check:** shapes that aren't moving are dropped if another object is moving [1].
+   - **Whole-scene changes:** if the "object" covers more than 50% of the frame (such as the camera changing its own exposure), no sticker is made.
+4. **Object enhancement:** boost the contrast with CLAHE (on the brightness channel only, so colours don't change) and sharpen with an unsharp mask, so stickers from murky CCTV look crisp.
+5. **Cutout:** keep the moving object, make the background transparent, and add a white sticker outline (scaled to the object's size, so it shows on 4K footage too).
+6. **Stickers:** skip near-duplicate stickers (an object standing still), then download them as a zip, a printable sheet or a stop-motion GIF [30].
 
 ## Setup
 Requires Python 3.14.
@@ -46,6 +47,20 @@ Settings in the sidebar:
 - **Skip near-duplicates** (default 0.70): a sticker is skipped if its shape
   overlaps the last kept sticker by more than this. Lower skips more; 1.0 keeps
   every sticker.
+- **Night mode** (default Auto): gamma correction and CLAHE for dark footage.
+  Auto turns it on when the clip is dark; On/Off override that.
+- **Shadow removal** (default Auto): removes shadows from the stickers. Auto
+  turns it on for colour footage and off for black-and-white or infrared
+  footage, where the colour test doesn't work.
+
+Once the stickers are made:
+- Untick any sticker you don't want (a stray blob or a bit of background).
+  Only ticked stickers go into the downloads. **Tick all** / **Untick all**
+  change every box at once.
+- Click a sticker to see it full size.
+- The timeline under the stats shows where in the video each sticker was cut.
+- Download each sticker as a PNG, all of them as a zip, a printable A4 sticker
+  sheet, or a stop-motion GIF (previewed beside the title).
 
 ## Test footage
 Videos are not stored in this repo because of their size, and because the stock  clips are licensed previews. Put them in a `footage/` folder in the project root. The hand-marked frames for each clip go in `ground_truth/<clip name>/`, which is not in the repo either.
@@ -97,7 +112,9 @@ Several clips can be scored at once. Each method is run over the whole clip and 
 | Extra | share of the predicted mask that is not the object (ghosts, shadows): lower is better |
 | ms/frame | time per frame for detection and cleanup |
 
-The running-average rows separate Sayo's changes: *Blind, 1st frame* is the old pipeline, and *Selective, median* is what the app runs now.
+IoU is the overlap measure used in the PASCAL VOC challenge [2].
+
+The running-average rows separate each change: *Blind, 1st frame* is the old pipeline, *Selective, median* adds Sayo's selective update and median start, and *App: + shadows* is what the app runs now (it also adds shadow removal, the ghost check and the whole-scene filter).
 
 | Option | What it does |
 | --- | --- |
@@ -121,11 +138,13 @@ Our runs: `before` (old pipeline), `sayo` (selective update + median start), `fi
 ## Project structure
 - `app.py`: Streamlit interface (upload, display, download)
 - `styles/style.css`, `.streamlit/config.toml`: the app's look
+- `styles/responsive.css`: makes the page fit smaller windows and phones
 - `stickers.py`: the image-processing pipeline
-- `requirements.txt`: libraries to install
+- `requirements.txt`: libraries to install (the versions we tested with)
 - `evaluate.py`: scores motion-detection methods against ground truth (IoU, extra area, timing)
 - `mark_frames.py`: hand-mark ground-truth masks for a clip
-- `compare_methods.py`: side-by-side images of alternative methods; `--make-test` makes a synthetic clip with exact ground truth
+- `compare_methods.py`: side-by-side images of alternative methods, including GrabCut [31, 32]; `--make-test` makes a synthetic clip with exact ground truth
+- `tune_night.py`: helps choose the night settings (`NIGHT_BRIGHTNESS`, `NIGHT_GAMMA`): reports each clip's brightness and saves a gamma comparison image
 
 Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked frames), `output/` (from `compare_methods.py`), and `evaluation/` (results, per-frame scores and comparison images for each run).
 
@@ -154,13 +173,22 @@ Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked f
 12. Beckham, R. (no date) Security Camera View Of Hooded Intruder With A Torch Entering A Home And Walking Upstairs Backlit Night - 4K stock video. Getty Images, no. 2200417282. Available at: https://www.gettyimages.ie/detail/video/security-camera-view-of-hooded-intruder-with-a-torch-stock-footage/2200417282
 13. tawattiw (no date) Burglar Stealing Valuables from Desk Inside House at Night - 4K stock video. Getty Images, no. 2298084001. Available at: https://www.gettyimages.ie/detail/video/burglar-stealing-valuables-from-desk-inside-house-at-stock-footage/2298084001
 14. GeeksforGeeks (no date) Python – Intensity Transformation Operations on Images. Available at: https://www.geeksforgeeks.org/python/python-intensity-transformation-operations-on-images/ (Accessed: October 2026).
-15. GeeksforGeeks (no date) CLAHE Histogram Equalization – OpenCV. Available at: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/ (Accessed: October 2026 ).
+15. GeeksforGeeks (no date) CLAHE Histogram Equalization – OpenCV. Available at: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/ (Accessed: October 2026).
 16. GeeksforGeeks (no date) Program to extract frames using OpenCV-Python. Available at: https://www.geeksforgeeks.org/python/python-program-extract-frames-using-opencv/ (Accessed: November 2026).
 17. GeeksforGeeks (no date) Python OpenCV | cv2.cvtColor() method. Available at: https://www.geeksforgeeks.org/python/python-opencv-cv2-cvtcolor-method/ (Accessed: October 2026).
-18. GeeksforGeeks (no date) Image Resizing using OpenCV | Python. Available at: https://www.geeksforgeeks.org/python/image-resizing-using-opencv-python/ (Accessed:November 2026).
+18. GeeksforGeeks (no date) Image Resizing using OpenCV | Python. Available at: https://www.geeksforgeeks.org/python/image-resizing-using-opencv-python/ (Accessed: November 2026).
 19. GeeksforGeeks (no date) Python OpenCV | cv2.putText() method. Available at: https://www.geeksforgeeks.org/python/python-opencv-cv2-puttext-method/ (Accessed: October 2026).
-20. GeeksforGeeks (no date) How to Display Multiple Images in One Window using OpenCV Python? Available at: https://www.geeksforgeeks.org/python/how-to-display-multiple-images-in-one-window-using-opencv-python/ (Accessed:November 2026).
-21. GeeksforGeeks (no date) Command-Line Option and Argument Parsing using argparse in Python. Available at: https://www.geeksforgeeks.org/python/command-line-option-and-argument-parsing-using-argparse-in-python/ (Accessed:November 2026).
-22. GeeksforGeeks (no date) How to pass a list as a command-line argument with argparse? Available at: https://www.geeksforgeeks.org/python/how-to-pass-a-list-as-a-command-line-argument-with-argparse/ (Accessed:November 2026).
+20. GeeksforGeeks (no date) How to Display Multiple Images in One Window using OpenCV Python? Available at: https://www.geeksforgeeks.org/python/how-to-display-multiple-images-in-one-window-using-opencv-python/ (Accessed: November 2026).
+21. GeeksforGeeks (no date) Command-Line Option and Argument Parsing using argparse in Python. Available at: https://www.geeksforgeeks.org/python/command-line-option-and-argument-parsing-using-argparse-in-python/ (Accessed: November 2026).
+22. GeeksforGeeks (no date) How to pass a list as a command-line argument with argparse? Available at: https://www.geeksforgeeks.org/python/how-to-pass-a-list-as-a-command-line-argument-with-argparse/ (Accessed: November 2026).
 
-[ADD: Sayo's references]
+23. Koller, D., Weber, J., Huang, T., Malik, J., Ogasawara, G., Rao, B. and Russell, S. (1994) 'Towards robust automatic traffic scene analysis in real-time', Proceedings of the 12th International Conference on Pattern Recognition, Jerusalem, pp. 126–131. doi:10.1109/ICPR.1994.576243. Cited in Piccardi (2004).
+24. LearnOpenCV (2019) Simple Background Estimation in Videos using OpenCV (C++/Python). Available at: https://learnopencv.com/simple-background-estimation-in-videos-using-opencv-c-python/ (Accessed: November 2026).
+25. OpenCV (no date) Changing the contrast and brightness of an image! Available at: https://docs.opencv.org/4.x/d3/dc1/tutorial_basic_linear_transform.html
+26. OpenCV (no date) Operations on arrays. Available at: https://docs.opencv.org/4.x/d2/de8/group__core__array.html
+27. Streamlit (no date) st.slider. Available at: https://docs.streamlit.io/develop/api-reference/widgets/st.slider
+28. Google Fonts (no date) Fredoka. Available at: https://fonts.google.com/specimen/Fredoka
+29. Google Fonts (no date) Figtree. Available at: https://fonts.google.com/specimen/Figtree
+30. Pillow (no date) Image file formats: GIF. Available at: https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html#gif
+31. Rother, C., Kolmogorov, V. and Blake, A. (2004) '"GrabCut": interactive foreground extraction using iterated graph cuts', ACM Transactions on Graphics, 23(3), pp. 309–314.
+32. OpenCV (no date) Interactive Foreground Extraction using GrabCut Algorithm. Available at: https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html

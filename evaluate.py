@@ -17,17 +17,18 @@ Run with:
     python evaluate.py footage/donny.mov --every-n 1 5 15 30
     python evaluate.py footage/donny.mov --alphas 0.005 0.01 0.02 0.05 0.1
     python evaluate.py footage/dusk.mp4 --clahe per-frame   # old CLAHE rule
+    python evaluate.py footage/donny.mov --per-frame per_frame.csv
 
 Running-average rows (one set per alpha):
     Blind, 1st frame      the old pipeline (week 9)
     Selective, 1st frame  + selective update only
     Blind, median         + starting background from estimate_background() only
-    Selective, median         both (Sayo's version)
-    App: + shadows            Selective, median + Pati's shadow removal,
-                              exactly what the app runs now (shadow removal
-                              is skipped on footage with no colour, like in
-                              the app on its Auto setting)
-    python evaluate.py footage/donny.mov --per-frame per_frame.csv
+    Selective, median     both (Sayo's version)
+    App: + shadows        Selective, median + shadow removal, the ghost
+                          check and the whole-scene filter: exactly what
+                          the app runs now (shadow removal is skipped on
+                          footage with no colour, like the app's Auto
+                          setting)
 
 Ground truth is read from ground_truth/<clip name>/frame_XXXXX_mask.png.
 For a test with a known answer, compare_methods.py --make-test writes
@@ -55,8 +56,8 @@ from stickers import (BACKGROUND_ALPHA, NIGHT_BRIGHTNESS, background_motion_mask
 # ---------------------------------------------------------------- methods
 
 class FrameDifferencing:
-    """The current pipeline: compare each frame with the frame exactly
-    N frames earlier, the same gap extract_stickers() uses."""
+    """The original pipeline, kept as a baseline: compare each
+    frame with the frame exactly N frames earlier."""
 
     def __init__(self, every_n):
         self.every_n = every_n

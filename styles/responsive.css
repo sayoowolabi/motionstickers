@@ -37,7 +37,7 @@ h1 {
 
 /* ---------------------------------------------------------- top layout -- */
 /* Left side (title, steps, upload) and right side (the two previews).
-   CHANGED: this uses a container query instead of a media query. A media
+   This uses a container query instead of a media query. A media
    query looks at the whole browser window, but the Settings sidebar takes
    ~350px of that, so the page squashed before the rule kicked in.
    A container query looks at how wide the page area itself is.
@@ -59,14 +59,14 @@ h1 {
         width: 100% !important;
         min-width: 0;
     }
-    /* NEW: once the previews are underneath, they'd stretch across the
+    /* Once the previews are underneath, they'd stretch across the
        whole page and the video got huge. Keep the pair to a sensible
        width, centred, with a little space above */
     .st-key-top-layout .st-key-previews {
         max-width: 760px;
         margin: 1rem auto 0;
     }
-    /* NEW: and keep the video short, about the same size as the
+    /* And keep the video short, about the same size as the
        stop-motion box next to it. !important beats the style in app.py */
     .st-key-top-layout video {
         max-height: 230px !important;

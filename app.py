@@ -5,8 +5,9 @@ app.py - the interface.
     Upload a video -> extract_stickers() from stickers.py -> show the stickers
     in time order on a "cutting mat" -> download them all as transparent PNGs.
 
-Styling: colours live in .streamlit/config.toml, everything else in CSS below.
-NEW: styles/responsive.css makes the page fit smaller windows and phones.
+Styling: colours live in .streamlit/config.toml, everything else in
+styles/style.css. styles/responsive.css makes the page fit smaller windows
+and phones.
 """
 
 import base64
@@ -25,9 +26,9 @@ from stickers import DUPLICATE_OVERLAP, extract_stickers, make_gif
 
 st.set_page_config(page_title="Motion Stickers!", page_icon="✂️", layout="wide")
 
-# Load the page styling from styles/style.css
-# NEW: then styles/responsive.css, which is loaded second so its rules for
-# smaller screens win over the normal ones
+# Load the page styling from styles/style.css, then styles/responsive.css,
+# which is loaded second so its rules for smaller screens win over the
+# normal ones
 styles = Path(__file__).parent / "styles"
 css = (styles / "style.css").read_text(encoding="utf-8")
 css += "\n" + (styles / "responsive.css").read_text(encoding="utf-8")
@@ -37,8 +38,8 @@ st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 def sticker_figure(sticker, t, i, kept=True):
     """Turn one BGRA sticker into an HTML <figure> for the sticker sheet.
     Unticked stickers get the "unticked" class so the CSS can fade them out.
-    NEW: clicking the sticker opens it full size; clicking again closes it."""
-    # NEW: full-size copy for the enlarged view, made before shrinking
+    Clicking the sticker opens it full size; clicking again closes it."""
+    # Full-size copy for the enlarged view, made before shrinking
     ok, big_png = cv2.imencode(".png", sticker)
     big_b64 = base64.b64encode(big_png.tobytes()).decode()
     big_h, big_w = sticker.shape[:2]                # full size, for the caption
@@ -49,9 +50,9 @@ def sticker_figure(sticker, t, i, kept=True):
     ok, png = cv2.imencode(".png", sticker)
     b64 = base64.b64encode(png.tobytes()).decode()
     tilt = [-3, 2, -1.5, 3, -2, 1][i % 6]         # varied tilt, like hand-placed stickers
-    faded = "" if kept else " unticked"           # NEW: faded look for unticked stickers
+    faded = "" if kept else " unticked"           # Faded look for unticked stickers
 
-    # NEW: click to enlarge. <details> opens and closes on click with no
+    # Click to enlarge: <details> opens and closes on click with no
     # JavaScript. When it's open, the CSS turns .zoom-big into a full-screen
     # dark overlay, and clicking the overlay closes it again
     return (f'<details class="zoom"><summary>'
@@ -64,12 +65,12 @@ def sticker_figure(sticker, t, i, kept=True):
             f'</span></summary></details>')
 
 
-# NEW: confetti colours, matching the yellow buttons plus a few bright extras
+# Confetti colours, matching the yellow buttons plus a few bright extras
 CONFETTI_COLOURS = ["#f5c542", "#ff6b6b", "#4ecdc4", "#ffffff", "#ff9ff3", "#54a0ff"]
 
 
 def confetti(pieces=120, slowest=8.0, fastest=5.0):
-    """NEW: confetti that drifts down the screen once when the stickers are ready.
+    """Confetti that drifts down the screen once when the stickers are ready.
     Plain HTML and CSS (no JavaScript), so it works without internet too.
     slowest/fastest are how many seconds a piece takes to fall: raise them
     to slow it down."""
@@ -99,7 +100,7 @@ def confetti(pieces=120, slowest=8.0, fastest=5.0):
 
 
 def preview_placeholder(message, label="Stop-motion preview", tilt=2, tape="left"):
-    """NEW: a dashed "empty sticker" for a preview spot that has nothing in it
+    """A dashed "empty sticker" for a preview spot that has nothing in it
     yet (no GIF, or no video uploaded), so the page isn't just a blank gap.
     tape is which top corner gets a strip of washi tape ("left" or "right")."""
     return (f'<figure class="sticker" style="--tilt:{tilt}deg">'
@@ -107,12 +108,12 @@ def preview_placeholder(message, label="Stop-motion preview", tilt=2, tape="left
             'width:100%; max-width:320px; height:190px; margin:auto; padding:12px; '
             'display:flex; align-items:center; justify-content:center; '
             'text-align:center">'
-            f'<span class="tape {tape}"></span>'            # NEW: washi tape
+            f'<span class="tape {tape}"></span>'            # Washi tape
             f'<span style="opacity:0.85">{message}</span></div>'
             f'<figcaption>{label}</figcaption></figure>')
 
 
-# NEW: fun messages shown on the progress bar while the stickers are made.
+# Fun messages shown on the progress bar while the stickers are made.
 # They change every couple of seconds, so a long video doesn't look stuck
 LOADING_MESSAGES = [
     "Sharpening the scissors ✂️",
@@ -128,7 +129,7 @@ MESSAGE_SECONDS = 2.0                     # how long each message stays up
 
 
 def progress_with_messages(bar):
-    """NEW: wrap the progress bar so it shows a fun message as well as the
+    """Wrap the progress bar so it shows a fun message as well as the
     progress. extract_stickers() calls this with the fraction done (0 to 1),
     exactly like it called bar.progress before."""
     start = time.monotonic()
@@ -142,7 +143,7 @@ def progress_with_messages(bar):
 
 
 def video_info(video_path):
-    """NEW: how many frames the video has and how long it is in seconds,
+    """How many frames the video has and how long it is in seconds,
     for the stats panel. Some videos don't report a frame rate, so guard
     against dividing by zero."""
     cap = cv2.VideoCapture(video_path)
@@ -154,7 +155,7 @@ def video_info(video_path):
 
 
 def stats_panel(stats):
-    """NEW: a row of yellow "stat stickers" showing what happened on this run.
+    """A row of yellow "stat stickers" showing what happened on this run.
     The styling is in styles/style.css (.stats and .stat)."""
     cards = [
         (stats["stickers"], "stickers found"),
@@ -169,14 +170,14 @@ def stats_panel(stats):
     return f'<div class="stats">{html}</div>'
 
 
-# NEW: the three steps at the top of the page. They're "live": the step
+# The three steps at the top of the page. They're "live": the step
 # you're on is highlighted, finished steps get a tick, and later steps are
 # faded. The styling is in styles/style.css (.step.current/.done/.todo)
 STEPS = ["Upload your footage", "We find what moves", "Peel off the stickers"]
 
 
 def steps_html(current, working=False):
-    """NEW: HTML for the steps row. current is the step you're on (1, 2 or 3).
+    """HTML for the steps row. current is the step you're on (1, 2 or 3).
     working=True makes the current step pulse while the video is processed."""
     spans = []
     for number, text in enumerate(STEPS, start=1):
@@ -192,14 +193,14 @@ def steps_html(current, working=False):
     return f'<div class="steps">{"".join(spans)}</div>'
 
 
-# NEW: example stickers shown before any real ones are made, so the bottom
+# Example stickers shown before any real ones are made, so the bottom
 # of the page isn't empty and new users can see what they'll get.
 # (emoji, time) pairs, made to look like things a home camera might catch
 EXAMPLE_STICKERS = [("🚶", 0.5), ("🐕", 2.0), ("📦", 3.5), ("🐈", 5.0), ("🚲", 7.5)]
 
 
 def example_stickers_html(message="Upload a clip and your stickers land here ✂️"):
-    """NEW: a row of faded example stickers with a line explaining them.
+    """A row of faded example stickers with a line explaining them.
     The styling is in styles/style.css (.examples and .example-sticker)."""
     tilts = [-4, 3, -2, 4, -3]
     stickers = "".join(f'<div class="example-sticker" style="--tilt:{tilt}deg">'
@@ -210,7 +211,7 @@ def example_stickers_html(message="Upload a clip and your stickers land here ✂
             f'<div class="example-row">{stickers}</div></div>')
 
 
-# NEW: timeline strip. A bar the length of the video with a dot where each
+# Timeline strip. A bar the length of the video with a dot where each
 # sticker was cut. Hover a dot to see its time; unticked stickers are faded.
 # The styling is in styles/style.css (.timeline, .track, .dot)
 def timeline_html(stickers, kept_flags, video_seconds):
@@ -230,7 +231,7 @@ def timeline_html(stickers, kept_flags, video_seconds):
             f'<span class="tl-end">{length:.1f} s</span></div>')
 
 
-# NEW: printable sticker sheet. Lays the kept stickers out on one A4 page with
+# Printable sticker sheet. Lays the kept stickers out on one A4 page with
 # OpenCV: alpha-blends each sticker onto a cream "cutting mat" background and
 # draws a grey cut line around it, found by growing the sticker's mask
 # (dilation) and tracing its outline (contours)
@@ -311,14 +312,14 @@ def make_sticker_sheet(keep):
     return png.tobytes()
 
 
-# NEW: footer details. Check the names and module before submitting
+# Footer details
 TEAM = ["Patrycja", "Chloe", "Sayo"]
-MODULE = "Image Processing · 4th Year · 2026"
+MODULE = "IDSP 1701 Image Processing · 4th Year · 2026"
 REPO_URL = "https://github.com/sayoowolabi/motionstickers"
 
 
 def render_footer():
-    """NEW: footer with a dashed "cut here" line, the team as little name-tag
+    """Footer with a dashed "cut here" line, the team as little name-tag
     stickers, the module, and a GitHub button. Styling is in styles/style.css
     (.footer). Called before every st.stop() too, so it's always at the bottom."""
     tilts = [-3, 2, -1.5, 3]                 # hand-placed look, like the steps
@@ -333,25 +334,25 @@ def render_footer():
 
 
 # ------------------------------------------------------------------ layout --
-# NEW: everything you do goes down the left (title, steps, upload, button),
+# Everything you do goes down the left (title, steps, upload, button),
 # and the right has two previews side by side: your clip (the input) and the
 # stop-motion (the output). vertical_alignment centres the previews against
-# the left-hand column, so there's no big gap under the title
-# CHANGED: [6, 5] gives the left column a little more room, so all three
-# steps fit on one row
-# NEW: the columns go in a container with a key. Streamlit gives it the CSS
+# the left-hand column, so there's no big gap under the title.
+# [6, 5] gives the left column a little more room, so all three steps fit
+# on one row.
+# The columns go in a container with a key. Streamlit gives it the CSS
 # class .st-key-top-layout, which responsive.css uses to put the previews
 # under the title when the window is narrow
 with st.container(key="top-layout"):
     col_left, col_right = st.columns([6, 5], gap="large", vertical_alignment="center")
 with col_left:
     st.title("Motion Stickers!")
-    # CHANGED: the steps go in a slot, so they can be updated while the
+    # The steps go in a slot, so they can be updated while the
     # video is being processed further down the script
     steps_slot = st.empty()
     uploaded = st.file_uploader("Video file", type=["mp4", "mov", "avi", "mkv"])
 
-    # NEW: which step are we on? Stickers ready -> 3, video uploaded -> 2,
+    # Which step are we on? Stickers ready -> 3, video uploaded -> 2,
     # nothing yet -> 1
     if st.session_state.get("stickers"):
         current_step = 3
@@ -365,8 +366,8 @@ with col_left:
 
 # The clip gets the bigger share, the stop-motion preview the smaller
 # vertical_alignment="bottom" lines up the bottoms of the two previews, so
-# the "Your clip" and "Stop-motion preview" badges sit at the same height
-# NEW: in a keyed container too (.st-key-previews in responsive.css)
+# the "Your clip" and "Stop-motion preview" badges sit at the same height.
+# Also in a keyed container (.st-key-previews in responsive.css)
 with col_right.container(key="previews"):
     col_clip, col_gif = st.columns([3, 2], gap="medium", vertical_alignment="bottom")
 
@@ -378,14 +379,14 @@ preview_slot.markdown(preview_placeholder("Your stop-motion will appear here ✂
                       unsafe_allow_html=True)
 
 if not uploaded:
-    # NEW: placeholder for the clip until a video is uploaded, matching the
+    # Placeholder for the clip until a video is uploaded, matching the
     # stop-motion one next to it (tilted the other way)
     col_clip.markdown(preview_placeholder("Your clip will appear here 🎬",
                                           label="Your clip", tilt=-2, tape="left"),
                       unsafe_allow_html=True)
 else:
     with col_clip:
-        # NEW: washi tape on the video's top-left corner, like the placeholder
+        # Washi tape on the video's top-left corner, like the placeholder
         # had. st.video can't hold extra HTML, so the tape goes in a
         # zero-height box just above the video and hangs down over its corner.
         # z-index keeps it on top of the video
@@ -398,8 +399,8 @@ else:
         # Video styled like a cut-out stuck on the mat: rounded corners, a
         # deep shadow, a yellow dashed "cut here" line around it, and a
         # slight tilt. It lifts and straightens on hover like the stickers.
-        # Comes with a yellow "Your clip" label to match "Stop-motion preview"
-        # CHANGED: max-height is now 320px or 45% of the window height,
+        # Comes with a yellow "Your clip" label to match "Stop-motion preview".
+        # Its height is capped at 320px or 45% of the window height,
         # whichever is smaller, so it fits on short screens too
         st.markdown('<style>video{max-height:min(320px, 45vh); width:auto !important; '
                     'max-width:100%; display:block; margin:12px auto 0; '
@@ -417,7 +418,7 @@ else:
 
 with st.sidebar:
     st.header("Settings")
-    # Motion detection now looks at every frame (to keep the background
+    # Motion detection looks at every frame (to keep the background
     # model up to date), so this slider only controls how often a sticker
     # is made, not how accurate the detection is
     every_n = st.slider("Check every Nth frame", 1, 60, 15,
@@ -440,39 +441,39 @@ with st.sidebar:
                                       "or infrared footage, where it doesn't work.")
     st.caption("Works best with a fixed camera, like indoor CCTV or a doorbell cam.")
 
-if make:                                  # CHANGED: the button is now drawn at the top
+if make:                                  # the button itself is drawn at the top
     # OpenCV needs a real file path, so save the upload to a temp file.
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-        tmp.write(uploaded.getvalue())   # CHANGED: getvalue(), as the preview reads it too
+        tmp.write(uploaded.getvalue())   # getvalue(), as the preview reads it too
         video_path = tmp.name
 
-    # NEW: step 2 pulses while the video is processed
+    # Step 2 pulses while the video is processed
     steps_slot.markdown(steps_html(2, working=True), unsafe_allow_html=True)
     bar = st.progress(0.0, text=LOADING_MESSAGES[0])
-    started = time.perf_counter()        # NEW: time the run for the stats panel
+    started = time.perf_counter()        # Time the run for the stats panel
     try:
-        # CHANGED: progress_with_messages(bar) instead of bar.progress, so the
+        # progress_with_messages(bar) rather than bar.progress, so the
         # bar shows the fun loading messages
         stickers = extract_stickers(video_path, every_n, progress_with_messages(bar),
                                     overlap,
                                     night=AUTO_ON_OFF[night_choice],
                                     shadows=AUTO_ON_OFF[shadow_choice])
     except ValueError as err:
-        st.session_state.stickers = []   # NEW: clear old stickers so they don't show under the error
-        st.session_state.stats = None    # NEW: and the old stats
-        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
+        st.session_state.stickers = []   # Clear old stickers so they don't show under the error
+        st.session_state.stats = None    # and the old stats
+        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # Stop pulsing
         st.error(f"{err} Try an MP4 file.")
-        render_footer()                  # NEW: keep the footer on the page
+        render_footer()                  # Keep the footer on the page
         st.stop()
     bar.empty()
-    # NEW: save the stickers so they're still there when a checkbox is ticked.
+    # Save the stickers so they're still there when a checkbox is ticked.
     # Streamlit re-runs the whole script on every click, and the button above
     # is only True on the run straight after it's pressed
     st.session_state.stickers = stickers
-    # NEW: a new number for each video, so the checkboxes start ticked again
+    # A new number for each video, so the checkboxes start ticked again
     st.session_state.run_id = st.session_state.get("run_id", 0) + 1
 
-    # NEW: numbers for the stats panel, saved like the stickers so they
+    # Numbers for the stats panel, saved like the stickers so they
     # stay on screen when a checkbox is clicked
     frames, seconds = video_info(video_path)
     st.session_state.stats = {"stickers": len(stickers), "seconds": seconds,
@@ -480,21 +481,21 @@ if make:                                  # CHANGED: the button is now drawn at 
                               "took": time.perf_counter() - started}
 
     if not stickers:
-        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # NEW: stop pulsing
+        steps_slot.markdown(steps_html(2), unsafe_allow_html=True)   # Stop pulsing
         st.info("No movement found. Try a lower 'every Nth frame' value in Settings.")
-        render_footer()                  # NEW: keep the footer on the page
+        render_footer()                  # Keep the footer on the page
         st.stop()
 
-    # NEW: a little celebration when the stickers are ready. Only on the run
+    # A little celebration when the stickers are ready. Only on the run
     # straight after "Make stickers", not every time a checkbox is clicked
     confetti()
-    # NEW: all done, so step 3 is highlighted and steps 1 and 2 get ticks
+    # All done, so step 3 is highlighted and steps 1 and 2 get ticks
     steps_slot.markdown(steps_html(3), unsafe_allow_html=True)
 
-# NEW: show the saved stickers on every re-run, not just straight after the button
+# Show the saved stickers on every re-run, not just straight after the button
 stickers = st.session_state.get("stickers")
 
-# NEW: no stickers yet, so show the faded examples instead
+# No stickers yet, so show the faded examples instead
 if not stickers:
     # The line under the examples changes once a video is uploaded
     message = ("Click <b>Make stickers</b> and they'll land here ✂️" if uploaded
@@ -504,45 +505,45 @@ if stickers:
     # anchor=False hides the little link icon Streamlit puts next to headings
     st.subheader(f"{len(stickers)} stickers, in the order they appeared", anchor=False)
 
-    # NEW: the stats panel, if this run saved some
+    # The stats panel, if this run saved some
     if st.session_state.get("stats"):
         st.markdown(stats_panel(st.session_state.stats), unsafe_allow_html=True)
-    # NEW: a slot for the timeline strip, filled in once we know which
+    # A slot for the timeline strip, filled in once we know which
     # stickers are ticked
     timeline_slot = st.empty()
 
-    # NEW: human-in-the-loop review. The pipeline can't catch every mistake
+    # Human-in-the-loop review. The pipeline can't catch every mistake
     # (stray blobs, bits of background), so the user unticks bad stickers and
     # only the ticked ones go into the zip and the GIF
     st.caption("Untick any sticker you don't want, like a stray blob or a bit of "
                "background. Only ticked stickers go into the downloads.")
 
-    # NEW: one checkbox key per sticker. The run_id makes the keys different
+    # One checkbox key per sticker. The run_id makes the keys different
     # for each video, so a new video starts with every box ticked
     keys = [f"keep_{st.session_state.run_id}_{i}" for i in range(len(stickers))]
     for key in keys:
         st.session_state.setdefault(key, True)        # ticked by default
 
-    # NEW: the Tick all / Untick all buttons call this before the page re-runs
+    # The Tick all / Untick all buttons call this before the page re-runs
     def set_all(keys, value):
         for key in keys:
             st.session_state[key] = value
 
-    # NEW: the ticked stickers, worked out before drawing the page so the
+    # The ticked stickers, worked out before drawing the page so the
     # counter can go at the top
     keep = [(t, sticker) for key, (t, sticker) in zip(keys, stickers)
             if st.session_state[key]]
 
-    # NEW: fill in the timeline strip
+    # Fill in the timeline strip
     video_seconds = (st.session_state.get("stats") or {}).get("seconds", 0)
     timeline_slot.markdown(timeline_html(stickers, [st.session_state[k] for k in keys],
                                          video_seconds),
                            unsafe_allow_html=True)
 
-    # NEW: Tick all / Untick all buttons and a "Keeping X of Y" counter.
-    # CHANGED: narrow columns with a small gap keep the buttons side by side,
+    # Tick all / Untick all buttons and a "Keeping X of Y" counter.
+    # Narrow columns with a small gap keep the buttons side by side,
     # and the counter is a yellow pill to match the other badges
-    # NEW: keyed container (.st-key-tick-row) so the buttons only take the
+    # Keyed container (.st-key-tick-row) so the buttons only take the
     # width they need and wrap on small screens
     with st.container(key="tick-row"):
         col_all, col_none, col_count, _ = st.columns([1, 1, 2, 4], gap="small",
@@ -555,8 +556,8 @@ if stickers:
         f'Keeping {len(keep)} of {len(stickers)} stickers</span>',
         unsafe_allow_html=True)
 
-    # NEW: the sticker grid, 4 per row, each sticker with its checkbox underneath
-    # CHANGED: in a keyed container (.st-key-sticker-grid), so on smaller
+    # The sticker grid, 4 per row, each sticker with its checkbox underneath
+    # In a keyed container (.st-key-sticker-grid), so on smaller
     # screens each row of 4 wraps to 2 + 2, or 1 per line on a phone
     grid = st.container(key="sticker-grid")
     for row_start in range(0, len(stickers), 4):
@@ -564,55 +565,55 @@ if stickers:
         for col, i in zip(cols, range(row_start, min(row_start + 4, len(stickers)))):
             t, sticker = stickers[i]
             with col:
-                # CHANGED: pass in whether it's ticked, so unticked ones fade out
+                # Pass in whether it's ticked, so unticked ones fade out
                 st.markdown(sticker_figure(sticker, t, i, st.session_state[keys[i]]),
                             unsafe_allow_html=True)
                 st.checkbox(f"Keep ({t:.1f} s)", key=keys[i])
-                # NEW: download just this one sticker as a transparent PNG
+                # Download just this one sticker as a transparent PNG
                 ok, one_png = cv2.imencode(".png", sticker)
                 st.download_button("⬇ PNG", one_png.tobytes(),
                                    file_name=f"sticker_{i + 1:02d}_{t:.1f}s.png",
                                    mime="image/png",
                                    key=f"dl_{st.session_state.run_id}_{i}")
 
-    # NEW: nothing to download if every box is unticked
+    # Nothing to download if every box is unticked
     if not keep:
-        # NEW: say why the preview is empty
+        # Say why the preview is empty
         preview_slot.markdown(preview_placeholder("Tick a sticker to see the stop-motion",
                                                   tape="right"),
                               unsafe_allow_html=True)
         st.warning("Tick at least one sticker to download.")
-        render_footer()                  # NEW: keep the footer on the page
+        render_footer()                  # Keep the footer on the page
         st.stop()
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zf:
-        for i, (t, sticker) in enumerate(keep):           # CHANGED: only the ticked stickers
+        for i, (t, sticker) in enumerate(keep):           # Only the ticked stickers
             ok, png = cv2.imencode(".png", sticker)          # PNG keeps transparency
             zf.writestr(f"sticker_{i:03d}_{t:.1f}s.png", png.tobytes())
 
-    # CHANGED: three download buttons now, with the printable sheet in the middle
-    # NEW: keyed container (.st-key-downloads) so they stack on small screens
+    # Three download buttons, with the printable sheet in the middle.
+    # Keyed container (.st-key-downloads) so they stack on small screens
     with st.container(key="downloads"):
         col_zip, col_sheet, col_gif = st.columns(3)
     with col_zip:
         st.download_button("Download all stickers (.zip)", zip_buffer.getvalue(),
                            file_name="stickers.zip", mime="application/zip")
     with col_sheet:
-        # NEW: printable A4 sticker sheet of the ticked stickers
+        # Printable A4 sticker sheet of the ticked stickers
         st.download_button("Download printable sheet (.png)", make_sticker_sheet(keep),
                            file_name="sticker_sheet.png", mime="image/png")
     with col_gif:
-        gif = make_gif(keep)                               # CHANGED: only the ticked stickers
+        gif = make_gif(keep)                               # Only the ticked stickers
         if gif:
             st.download_button("Download stop-motion (.gif)", gif,
                                file_name="stickers.gif", mime="image/gif")
-            # NEW: preview the GIF so you can check it without downloading.
+            # Preview the GIF so you can check it without downloading.
             # Shown as HTML, because st.image() resizes the GIF and only keeps
             # its first frame. Styled like the stickers, but without the tilt.
-            # CHANGED: goes in the slot beside the title, not under the button
+            # Goes in the slot beside the title, not under the button
             b64_gif = base64.b64encode(gif).decode()
-            # NEW: the GIF sits inside the same dashed yellow box as the
+            # The GIF sits inside the same dashed yellow box as the
             # placeholder it replaces (same size, same tilt, same washi tape),
             # centred and shrunk to fit, so the spot doesn't jump around
             preview_slot.markdown(f'<figure class="sticker" style="--tilt:2deg">'
@@ -628,5 +629,5 @@ if stickers:
                                   f'<figcaption>Stop-motion preview</figcaption></figure>',
                                   unsafe_allow_html=True)
 
-# NEW: footer at the bottom of the page
+# Footer at the bottom of the page
 render_footer()

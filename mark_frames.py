@@ -1,21 +1,26 @@
 """
 Ground-truth marking tool for evaluate.py (Chloe).
 
-Saves a few frames from a clip, then lets you trace the moving object in
-each one by clicking around its outline. Each traced frame is saved as a
+Saves a few frames from a clip, then lets you trace the objects in each one
+by clicking around their outlines. Each traced frame is saved as a
 black/white mask (white = object) - the "perfect answer" that the
 pipeline's masks are scored against.
+
+Marking rule (the same for every clip, so scores can be compared): trace
+every person or animal in view, moving or still. Don't trace shadows or
+light (such as a torch beam). Skip only frames with no person or animal
+in view.
 
 Run with:
     python mark_frames.py footage/donny.mov --count 10
 
 Controls in the window:
-    left click  add a point on the object's outline
+    left click  add a point on the outline
     z           undo the last point
     r           reset this frame
-    space       add another shape (e.g. a second object or a gap in the legs)
+    space       start another shape (e.g. a second person or animal)
     enter       save this frame's mask and go to the next one
-    s           skip this frame (nothing moving in it)
+    s           skip this frame (no person or animal in view)
     q           quit
 
 Files are saved to ground_truth/<clip name>/:
@@ -31,8 +36,9 @@ import numpy as np
 
 
 def pick_frame_indexes(total, count, skip_start):
-    """Spread `count` frames evenly through the clip, skipping the first few
-    (the running-average background needs time to settle)."""
+    """Spread `count` frames evenly through the clip, skipping the first
+    few (originally so the running-average background had time to settle;
+    kept so new markings can be compared with the existing ones)."""
     start = min(skip_start, total - 1)
     return np.linspace(start, total - 1, count).astype(int).tolist()
 
@@ -107,7 +113,7 @@ def main():
     out_dir = Path(args.out) / Path(args.video).stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    window = "Trace the moving object - enter=save, s=skip, q=quit"
+    window = "Trace every person or animal - enter=save, s=skip, q=quit"
     cv2.namedWindow(window)
 
     # Read frames in order rather than jumping with cap.set(), because
