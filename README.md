@@ -170,12 +170,13 @@ Made locally and not in the repo: `footage/` (videos), `ground_truth/` (marked f
 - [x] Choosing stickers before download, printable sheet and responsive layout
 The detection code in `stickers.py` hasn't changed since the final evaluation, so the results above match the code.
  
-## AI use
+## AI use declaration
 We declare that AI (ChatGPT) was used to assist with parts of this project.
 It was used in the sections of the code marked with an `AI USE` comment:
 the responsive layout, the click-to-enlarge view, the printable sticker
-sheet, the Streamlit state handling and the night brightness tuning. All
-AI-assisted code was reviewed and tested by the team.
+sheet, the Streamlit state handling, the night brightness tuning, the
+GrabCut comparison and the ground-truth marking tool. All AI-assisted code
+was reviewed and tested by the team.
 
 The following prompts were used:
 
@@ -300,10 +301,7 @@ References use IEEE style and are numbered in the order they are first cited.
 [31] Google Fonts, "Fredoka," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Fredoka (accessed Nov. 2026).
  
 [32] Google Fonts, "Figtree," Google Fonts. [Online]. Available: https://fonts.google.com/specimen/Figtree (accessed Nov. 2026).
-<<<<<<< HEAD
 
 [33] T. Porter and T. Duff, "Compositing digital images," *ACM SIGGRAPH Comput. Graph.*, vol. 18, no. 3, pp. 253–259, Jul. 1984.
 
 [34] S. Suzuki and K. Abe, "Topological structural analysis of digitized binary images by border following," *Comput. Vis. Graph. Image Process.*, vol. 30, no. 1, pp. 32–46, Apr. 1985.
-=======
->>>>>>> b643ba6b21a72533fa6d5f6d4477bc2bd3634a52
